@@ -1,0 +1,65 @@
+name: Deploy dashboard to GitHub Pages
+
+# Publishes the React dashboard as a static site. With no API reachable it falls
+# back to the bundled sample snapshot, so this is a working demo on its own and
+# starts serving live data once VITE_API_BASE points at the Render service.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Let a running deploy finish rather than cancelling it mid-publish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - run: npm ci
+
+      - name: Build
+        env:
+          # Pages serves the site from /<repo>/, so assets need that prefix.
+          BASE_PATH: /${{ github.event.repository.name }}/
+          # Repository variable, empty until the Render API exists. While empty
+          # the dashboard uses its bundled snapshot.
+          VITE_API_BASE: ${{ vars.API_BASE_URL }}
+        run: npm run build
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: frontend/dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

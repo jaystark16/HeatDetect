@@ -132,6 +132,25 @@ body {
   position: relative;
 }
 
+/* Degraded-state notice, above the map rather than replacing it — the
+   dashboard stays usable while stating that the data is bundled. */
+.map__notice {
+  position: absolute;
+  top: 10px;
+  /* Inset to clear Leaflet's own controls: zoom sits top-left, the layer
+     switcher top-right. A full-width banner is clipped behind both. */
+  left: 56px;
+  right: 56px;
+  z-index: 500; /* over Leaflet's panes, under its controls at 1000 */
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  font-size: 12.5px;
+  color: var(--status-warning);
+  background: color-mix(in oklab, var(--surface-1) 92%, transparent);
+  border: 1px solid color-mix(in oklab, var(--status-warning) 35%, transparent);
+  backdrop-filter: blur(3px);
+}
+
 .stats {
   grid-area: stats;
   display: flex;

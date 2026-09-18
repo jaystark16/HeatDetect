@@ -3,6 +3,9 @@ import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react()],
+  // GitHub Pages serves from a subpath (/HeatDetect/); Cloudflare Pages and the
+  // dev server serve from the root. The deploy workflow sets BASE_PATH.
+  base: process.env.BASE_PATH ?? "/",
   server: {
     port: 5173,
     // Dev-only proxy: the browser calls /api/... on the Vite origin, so there is
