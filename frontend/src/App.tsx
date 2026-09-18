@@ -1,16 +1,26 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { api } from "./api";
 import DetailPanel from "./components/DetailPanel";
 import FilterPanel from "./components/FilterPanel";
 import MapView from "./components/MapView";
+import ProvenanceBar from "./components/ProvenanceBar";
 import StatsBar from "./components/StatsBar";
-import { fallbackAnalytics, fallbackHotspots } from "./fallback";
-import type { Analytics, Filters, Hotspot, HotspotCollection } from "./types";
+import type {
+  Analytics,
+  DataMode,
+  DatasetInfo,
+  Filters,
+  HotspotCollection,
+  HotspotDetail,
+  HotspotSummary,
+  ModelInfo,
+} from "./types";
 
 const DEFAULT_FILTERS: Filters = {
-  predictedClass: "all",
-  minConfidence: 0,
+  label: "all",
+  minFrpMw: 0,
+  minDistinctDays: 0,
   withinHours: "all",
 };
 
@@ -18,30 +28,64 @@ export default function App() {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [collection, setCollection] = useState<HotspotCollection | null>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
+  const [model, setModel] = useState<ModelInfo | null>(null);
+
+  const [selected, setSelected] = useState<HotspotSummary | null>(null);
+  const [detail, setDetail] = useState<HotspotDetail | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailUnavailable, setDetailUnavailable] = useState(false);
+  const [detailFromSnapshot, setDetailFromSnapshot] = useState(false);
+
   const [loading, setLoading] = useState(true);
-  const [offline, setOffline] = useState(false);
-  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [fromSnapshot, setFromSnapshot] = useState(false);
+  const [snapshotWindow, setSnapshotWindow] = useState<{
+    oldest: string | null;
+    newest: string | null;
+  } | null>(null);
+
+  // Load metadata once; it does not depend on filters.
+  useEffect(() => {
+    void (async () => {
+      const [datasetResult, modelResult] = await Promise.allSettled([
+        api.datasets(),
+        api.modelInfo(),
+      ]);
+      if (datasetResult.status === "fulfilled") setDatasets(datasetResult.value.data);
+      if (modelResult.status === "fulfilled") setModel(modelResult.value.data);
+    })();
+  }, []);
 
   const load = useCallback(async (next: Filters) => {
     setLoading(true);
+    setError(null);
     try {
       const [hotspots, stats] = await Promise.all([
         api.hotspots(next),
         api.analytics(),
       ]);
-      setCollection(hotspots);
-      setAnalytics(stats);
-      setOffline(false);
-    } catch {
-      // An unreachable API is not a dead end: fall back to the bundled
-      // snapshot so the dashboard still demonstrates the full flow. The
-      // banner below makes the degraded state explicit.
-      setCollection(fallbackHotspots(next));
-      setAnalytics(fallbackAnalytics());
-      setOffline(true);
+      setCollection(hotspots.data);
+      setAnalytics(stats.data);
+      setFromSnapshot(hotspots.fromSnapshot);
+      setSnapshotWindow(
+        hotspots.snapshot
+          ? {
+              oldest: hotspots.snapshot.oldestDetectionAt,
+              newest: hotspots.snapshot.newestDetectionAt,
+            }
+          : null,
+      );
+    } catch (cause) {
+      // Both the API and the snapshot failed. Showing an error is correct here —
+      // there is no data, and inventing a placeholder would be worse than saying so.
+      setError(
+        cause instanceof Error
+          ? `${cause.message} The cached snapshot could not be loaded either.`
+          : "Unexpected error loading data.",
+      );
+      setCollection(null);
     } finally {
-      setLastUpdated(new Date());
       setLoading(false);
     }
   }, []);
@@ -50,71 +94,98 @@ export default function App() {
     void load(filters);
   }, [filters, load]);
 
-  const hotspots = collection?.hotspots ?? [];
+  // Guards against a slow earlier request overwriting a newer selection's detail.
+  const detailRequest = useRef(0);
 
-  const selected = useMemo(
-    () => hotspots.find((h) => h.id === selectedId) ?? null,
-    [hotspots, selectedId],
-  );
-
-  const handleSelect = useCallback((hotspot: Hotspot) => {
-    setSelectedId(hotspot.id);
+  const handleSelect = useCallback(async (hotspot: HotspotSummary) => {
+    const token = ++detailRequest.current;
+    setSelected(hotspot);
+    setDetail(null);
+    setDetailUnavailable(false);
+    setDetailLoading(true);
+    try {
+      const result = await api.detail(hotspot.id);
+      if (token !== detailRequest.current) return;
+      setDetail(result.data);
+      setDetailUnavailable(result.data === null);
+      setDetailFromSnapshot(result.fromSnapshot);
+    } finally {
+      if (token === detailRequest.current) setDetailLoading(false);
+    }
   }, []);
 
-  const isSample = collection?.data_source === "sample";
+  const provenance = collection?.provenance ?? analytics?.provenance ?? null;
+
+  const mode: DataMode = fromSnapshot
+    ? "cached_snapshot"
+    : provenance?.is_live
+      ? "live"
+      : "historical";
+
+  const hotspots = collection?.hotspots ?? [];
 
   return (
     <div className="app">
       <header className="topbar">
         <span className="topbar__brand">HeatDetect</span>
-        <span className="topbar__sub">
+        <span className="topbar__sub topbar__sub--tagline">
           Industrial fire &amp; persistent thermal source classification
         </span>
         <span className="topbar__spacer" />
-
-        {/* Provenance is always on screen, so a demo can never be mistaken for
-            live satellite observations. */}
-        {collection && (
-          <span className={`chip ${isSample ? "chip--sample" : "chip--live"}`}>
-            {offline
-              ? "◆ Offline snapshot"
-              : isSample
-                ? "◆ Sample data"
-                : "● Live FIRMS data"}
-          </span>
-        )}
-
-        {lastUpdated && (
-          <span className="topbar__sub">
-            Updated {lastUpdated.toLocaleTimeString()}
-          </span>
-        )}
+        <ProvenanceBar
+          provenance={provenance}
+          mode={mode}
+          datasets={datasets}
+          model={model}
+          snapshotWindow={snapshotWindow}
+        />
       </header>
 
-      {loading && !collection ? (
-        <div className="banner" style={{ gridArea: "map" }}>
-          Loading detections… if the API has been idle it may be starting up,
-          which can take up to a minute.
-        </div>
-      ) : (
-        <div className="map">
-          {offline && (
-            <div className="map__notice">
-              API unreachable — showing the bundled sample snapshot. Classifications
-              are seeded examples, not live satellite observations.
-            </div>
-          )}
-          <MapView
-            hotspots={hotspots}
-            selectedId={selectedId}
-            onSelect={handleSelect}
-          />
-        </div>
-      )}
+      <FilterPanel filters={filters} analytics={analytics} onChange={setFilters} />
 
-      <FilterPanel filters={filters} onChange={setFilters} />
-      <DetailPanel hotspot={selected} />
-      <StatsBar analytics={analytics} shown={hotspots.length} />
+      <div className="map">
+        {loading && !collection && (
+          <div className="map__notice">
+            Loading detections… if the API has been idle it may be starting up,
+            which can take up to a minute.
+          </div>
+        )}
+
+        {error && <div className="map__notice map__notice--error">{error}</div>}
+
+        {fromSnapshot && !error && (
+          <div className="map__notice">
+            API unreachable — showing a cached snapshot of real FIRMS data. Not
+            live.
+          </div>
+        )}
+
+        {!loading && collection && hotspots.length === 0 && !error && (
+          <div className="map__notice">
+            No detections match these filters. The ingested window is 7 days, so
+            narrow time ranges can legitimately be empty.
+          </div>
+        )}
+
+        <MapView
+          hotspots={hotspots}
+          selectedId={selected?.id ?? null}
+          onSelect={handleSelect}
+        />
+      </div>
+
+      <DetailPanel
+        detail={detail}
+        loading={detailLoading}
+        fromSnapshot={detailFromSnapshot}
+        unavailable={detailUnavailable}
+      />
+
+      <StatsBar
+        analytics={analytics}
+        shown={hotspots.length}
+        totalMatching={collection?.total_matching ?? 0}
+      />
     </div>
   );
 }

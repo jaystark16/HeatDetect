@@ -7,7 +7,7 @@ on:
 
 jobs:
   backend:
-    name: Backend — tests
+    name: Backend — tests & evals
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -22,7 +22,14 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
 
       - run: pip install -r requirements-dev.txt
-      - run: python -m pytest -q
+
+      - name: Unit and integration tests
+        run: python -m pytest -q
+
+      # Run the behavioural suite separately too, so its report appears in the
+      # log rather than only as a pass/fail inside pytest.
+      - name: Behavioural evaluation
+        run: python -m evals.run
 
   frontend:
     name: Frontend — typecheck & build
@@ -43,24 +50,41 @@ jobs:
       - run: npm run typecheck
       - run: npm run build
 
-  secrets:
-    name: No committed secrets
+  integrity:
+    name: Repository integrity
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
 
       # The FIRMS key is a 32-character hex string. Catching it here is cheaper
-      # than rotating it after it reaches a public repo.
-      - name: Scan for a leaked FIRMS MAP_KEY
+      # than rotating it after it reaches a public repository.
+      - name: No committed API keys
         run: |
-          if git grep -nIE 'FIRMS_MAP_KEY[[:space:]]*=[[:space:]]*[0-9a-f]{16,}' -- . ':!*.example'; then
+          if git grep -nIE '(FIRMS_MAP_KEY|MAP_KEY)[[:space:]]*=[[:space:]]*[0-9a-f]{16,}' -- . ':!*.example'; then
             echo "::error::A FIRMS MAP_KEY looks committed. Remove it and rotate the key."
             exit 1
           fi
 
-      - name: Ensure no .env file is tracked
+      - name: No committed database URL with credentials
+        run: |
+          if git grep -nIE 'postgres(ql)?://[^:]+:[^@]+@' -- . ':!*.example' ':!docs/**'; then
+            echo "::error::A database URL with a password looks committed."
+            exit 1
+          fi
+
+      - name: No tracked .env
         run: |
           if git ls-files --error-unmatch backend/.env >/dev/null 2>&1; then
             echo "::error::backend/.env is tracked. It must stay untracked."
+            exit 1
+          fi
+
+      # The project's core discipline is that served data is real and labelled.
+      # A module reintroducing hand-written "sample" observations would quietly
+      # undo that, so its return is treated as a build failure.
+      - name: No fabricated sample-data module
+        run: |
+          if git ls-files --error-unmatch backend/app/sample_data.py >/dev/null 2>&1; then
+            echo "::error::backend/app/sample_data.py is back. Served data must come from the pipeline."
             exit 1
           fi

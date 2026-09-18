@@ -1,0 +1,103 @@
+{
+  "model_version": "rf-20260918-no_coords-rule-v1",
+  "trained_at": "2026-09-18T11:18:03.798797+00:00",
+  "feature_set": "no_coords",
+  "feature_count": 21,
+  "per_class": {
+    "industrial_fire": {
+      "precision": 0.24242424242424243,
+      "recall": 0.32,
+      "f1": 0.27586206896551724,
+      "support": 25
+    },
+    "persistent_industrial": {
+      "precision": 0.6775,
+      "recall": 0.5272373540856031,
+      "f1": 0.5929978118161926,
+      "support": 514
+    },
+    "natural_fire": {
+      "precision": 1.0,
+      "recall": 0.9911894273127754,
+      "f1": 0.995575221238938,
+      "support": 681
+    },
+    "unknown": {
+      "precision": 0.5695970695970696,
+      "recall": 0.716589861751152,
+      "f1": 0.6346938775510204,
+      "support": 434
+    }
+  },
+  "macro_f1": 0.624782244892917,
+  "confusion_matrix": {
+    "labels": [
+      "industrial_fire",
+      "persistent_industrial",
+      "natural_fire",
+      "unknown"
+    ],
+    "matrix": [
+      [
+        8,
+        14,
+        0,
+        3
+      ],
+      [
+        17,
+        271,
+        0,
+        226
+      ],
+      [
+        0,
+        0,
+        675,
+        6
+      ],
+      [
+        8,
+        115,
+        0,
+        311
+      ]
+    ]
+  },
+  "feature_importance": {
+    "distance_to_facility_m": 0.25784157940541175,
+    "facilities_within_5km": 0.2255708802834533,
+    "land_cover_barren": 0.09331019745268003,
+    "land_cover_unknown": 0.062431665420857686,
+    "brightness_k": 0.052396372659985375,
+    "dual_band_delta_k": 0.045726814728404404,
+    "land_cover_industrial": 0.042315725998841494,
+    "frp_mw": 0.041151055514679916,
+    "brightness_long_k": 0.03733717468075907,
+    "log_frp": 0.03619517824806517,
+    "facility_distance_missing": 0.03193646447130979,
+    "is_night": 0.024342182981115464,
+    "scan": 0.022343477971177837,
+    "track": 0.017863129889500392,
+    "land_cover_forest": 0.007598354710411666,
+    "is_viirs": 0.0009454498866972924,
+    "confidence_ordinal": 0.0006942956966494706,
+    "land_cover_urban": 0.0,
+    "land_cover_cropland": 0.0,
+    "land_cover_shrubland": 0.0,
+    "land_cover_water": 0.0
+  },
+  "training_rows": 3594,
+  "test_rows": 1654,
+  "train_blocks": 43,
+  "test_blocks": 18,
+  "label_rule_version": "rule-v1",
+  "split": "spatial block hold-out, 1 degree blocks",
+  "label_distribution": {
+    "natural_fire": 1159,
+    "unknown": 1227,
+    "industrial_fire": 328,
+    "persistent_industrial": 2534
+  },
+  "unsurveyed_cells_excluded": 1096
+}

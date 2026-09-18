@@ -22,15 +22,22 @@ dist-ssr/
 *.local
 .vite/
 
-# --- ML artifacts (large; keep only versioned releases) ---
-models/*.joblib
-models/*.pkl
-!models/.gitkeep
+# --- Database: regenerable from the pipeline, so not tracked ---
+# `python -m app.pipeline ingest && features` rebuilds it in under a minute.
+backend/data/*.db
+backend/data/*.db-journal
+backend/data/*.db-wal
 
-# --- Data (raw dumps are large; seeded demo snapshot IS committed) ---
-data/raw/
-data/interim/
-!data/seed/
+# --- Deliberately TRACKED, listed here so the intent is explicit ---
+# backend/data/osm_cache/*.json.gz
+#   Overpass is rate-limited and slow (~30s/tile, frequent 504s). Committing the
+#   cache means a fresh clone, CI and a live demo need no Overpass access.
+#   ~1 MiB gzipped for 30 tiles.
+# backend/models/single_observation_rf.joblib
+#   The deployed API needs a model and the training database is not tracked.
+#   2.4 MiB compressed.
+# frontend/public/snapshot.json
+#   Real pipeline output, so the static Pages deployment works with no backend.
 
 # --- Editors / OS ---
 .vscode/

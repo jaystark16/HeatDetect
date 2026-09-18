@@ -1,11 +1,21 @@
-# --- Phase 0: API skeleton -------------------------------------------------
+# --- API runtime ----------------------------------------------------------
 fastapi==0.118.0
 uvicorn[standard]==0.37.0
 pydantic==2.11.9
 pydantic-settings==2.11.0
-
-# --- Phase 1: FIRMS ingestion ---------------------------------------------
 httpx==0.28.1
 
-# Phases 2+ (database, GIS, ML) add their own dependencies as they land.
-# Kept deliberately lean so Render's free-tier builds stay fast.
+# --- Persistence ----------------------------------------------------------
+# SQLAlchemy Core only (no ORM session machinery) — the workload is bulk
+# ingestion plus aggregate reads, which SQL expresses better than objects.
+SQLAlchemy==2.0.44
+
+# --- Features and classification -----------------------------------------
+# numpy/scikit-learn are runtime dependencies because the API loads and calls
+# the trained model. scikit-learn's HistGradientBoosting is used instead of
+# xgboost: comparable accuracy on this feature set, one fewer compiled
+# dependency, and a faster cold build on Render's free tier. See
+# docs/adr/0003-model-choice.md.
+numpy==2.3.4
+scikit-learn==1.7.2
+joblib==1.5.2

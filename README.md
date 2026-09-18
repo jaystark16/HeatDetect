@@ -6,95 +6,137 @@ Smart India Hackathon 2026 · Problem **SIH26162** · National Technical Researc
 
 **Live dashboard: https://jaystark16.github.io/HeatDetect/**
 
-The deployed site currently runs on its bundled sample snapshot and labels itself accordingly — the API is not hosted yet.
-
 ---
 
 ## The problem
 
-Satellite fire-monitoring systems can tell you *where* unusual heat is. They cannot tell you *what caused it*.
+Satellite fire-monitoring tells you *where* unusual heat is. It does not tell you *what caused it*.
 
-A thermal anomaly over a petrochemical complex might be a routine gas flare, a steel plant's process heat, or an accident in progress. NASA FIRMS reports the hotspot either way. The gap — deciding which — is what this project addresses.
+A thermal anomaly over an industrial area might be routine process heat, a long-burning coal seam, or an incident in progress. NASA FIRMS reports the hotspot either way. Closing that gap is what this project does.
 
-HeatDetect enriches each satellite thermal detection with industrial infrastructure context, land cover, and **historical persistence**, then classifies the likely source and shows the reasoning on an interactive GIS dashboard.
+HeatDetect ingests real NASA FIRMS active-fire detections, enriches each one with OpenStreetMap industrial context and **multi-day persistence statistics**, classifies the likely source, and shows the evidence behind every verdict.
 
-### The core idea
+## The core idea
 
-A refinery flare and a refinery accident look nearly identical in a single satellite observation. What separates them is **time**:
+A routine industrial thermal source and an incident at the same site look nearly identical in a single satellite observation. What separates them is **time**:
 
-- A **flare** is persistent, with a stable intensity baseline.
-- An **accident** is a *deviation* from that baseline.
+- A **persistent source** recurs across many days with a stable intensity baseline.
+- An **incident** is a *deviation* from that baseline.
 
-So the system builds a per-location thermal baseline from historical detections and scores each new observation against it. That ratio is the most important feature the classifier sees, and it is what the evidence panel leads with.
+So the system computes a per-location baseline from its detection history and scores each observation against it. This follows the principle behind VIIRS Nightfire's flare/biomass separation — discriminate by temperature *and* persistence, not by brightness alone.
 
-### Classes
+## What it can and cannot claim
 
-| Class | Meaning |
-|---|---|
-| `industrial_fire` | Possible industrial fire — anomalous against an established baseline |
-| `persistent_industrial` | Routine industrial thermal source (flaring, process heat) |
-| `natural_fire` | Probable vegetation fire |
-| `unknown` | Insufficient evidence to classify |
+This matters more than any feature, so it is stated up front.
 
-### On careful language
+**It can** detect and monitor coal-seam fires, coal-handling and mining areas, power stations and industrial belts. Measured: 220 locations recur on 4+ distinct days in a 7-day window, and every persistent location checked had mapped industry within 5 km.
 
-A thermal anomaly is **evidence of unusual heat, not proof of an accident or explosion**. The UI, the API and this README say "possible", "probable" and "candidate" deliberately. Satellite data at 375 m resolution cannot support facility-level attribution with certainty, and presenting it otherwise would be wrong.
+**It cannot** monitor refinery gas flaring. Zero detections landed within 5 km of the Jamnagar or Vadinar refineries in a 24-hour window, despite both being mapped in OSM. Active-fire products are tuned for biomass burning; flares are largely why VIIRS **Nightfire** exists as a separate product, and its full data requires a licence application.
+
+**A thermal anomaly is evidence of unusual heat — not proof of a fire, an accident or an explosion.** All UI copy is hedged accordingly.
+
+Full measurements: [`docs/findings/2026-09-18-feed-characterisation.md`](docs/findings/2026-09-18-feed-characterisation.md).
 
 ---
 
 ## Architecture
 
 ```
-NASA FIRMS (VIIRS/MODIS)
-        │
-        ▼
-FastAPI ingestion ──► PostgreSQL + PostGIS ──► feature engineering
-                                                      │
-                                                      ▼
-                                          Random Forest / XGBoost
-                                                      │
-                                                      ▼
-                                              REST API (FastAPI)
-                                                      │
-                                                      ▼
-                                      React + Leaflet dashboard
+NASA FIRMS regional archives (open, no API key)
+OpenStreetMap via Overpass (cached, committed)
+          │
+          ▼
+   SQLite / Postgres          observed   detections, facilities, land_parcels
+          │                   derived    cell_stats, cell_context, cell_labels
+          ▼                   audit      ingest_runs
+   deterministic features  ──► persistence baselines, spatial context
+          │
+          ├──► rule engine (authoritative when history exists)
+          └──► RandomForest (single-observation fallback only)
+          │
+          ▼
+   FastAPI  ──►  React + Leaflet dashboard
 ```
+
+**Observed, derived and inferred data are physically separate** — different tables, different API objects, different visual treatment. A measurement can never be rendered as an inference by accident.
 
 | Layer | Technology |
 |---|---|
 | Frontend | React 19 + Vite + TypeScript + Leaflet |
-| Backend | Python 3.13 + FastAPI |
-| ML | scikit-learn / XGBoost (Phase 5) |
-| Database | PostgreSQL + PostGIS on Neon (Phase 2) |
-| Data | NASA FIRMS, OpenStreetMap, land cover |
+| Backend | Python 3.13 + FastAPI + SQLAlchemy Core |
+| ML | scikit-learn RandomForest |
+| Database | SQLite by default; Postgres when `DATABASE_URL` is set |
+| Data | NASA FIRMS, OpenStreetMap |
 
-### Hosting
-
-| Part | Host | Notes |
-|---|---|---|
-| Dashboard | Cloudflare Pages | Static SPA |
-| API | Render (free) | Blueprint in [`render.yaml`](render.yaml) |
-| Database | Neon | Postgres with the PostGIS extension |
-| Scheduling | GitHub Actions | Render's free tier has no cron |
+There is **no LLM in this system**, deliberately — see [ADR 0007](docs/adr/0007-no-llm.md). Evidence sentences are templates filled from computed values, so they cannot fabricate.
 
 ---
 
-## Running locally
+## How the classification works
 
-Requires Python 3.13+ and Node 24+. No Docker needed.
+Four classes: `industrial_fire`, `persistent_industrial`, `natural_fire`, `unknown`.
+
+**Deterministic rules decide** any location with enough history, using published thresholds (`GET /api/rules`). A rule verdict carries **no probability** — a threshold comparison does not have one, and attaching a number to it would be inventing a statistic.
+
+**The model only fills gaps.** It predicts from a single observation with no history features, and is consulted only where the rules abstain. It never overrides them.
+
+**A class the model is measurably bad at is not reported.** Suppression reads the model's own recorded held-out precision; anything below 0.5 is downgraded to `unknown` with the measured figure recorded. A model carrying no metrics is trusted for nothing.
+
+### Honest model performance
+
+Spatial hold-out by 1° block, so the same facility cannot appear in train and test.
+
+| class | precision | recall | F1 | support |
+|---|---|---|---|---|
+| `industrial_fire` | 0.242 | 0.320 | 0.276 | 25 |
+| `persistent_industrial` | 0.677 | 0.527 | 0.593 | 514 |
+| `natural_fire` | 1.000 | 0.991 | 0.996 | 681 |
+| `unknown` | 0.570 | 0.717 | 0.635 | 434 |
+
+macro F1 **0.625**. Overall accuracy is deliberately not reported: the classes are heavily imbalanced, so it would flatter the model while hiding that the most important class performs worst.
+
+Three caveats that belong next to those numbers:
+
+1. **Labels are programmatic heuristics, not verified ground truth.** These metrics measure agreement with a documented rule set, not correctness against reality.
+2. **`natural_fire` precision of 1.000 is leakage, not skill.** The label requires >5 km from industry and the model is handed distance directly. With proximity removed it falls to 0.747 — that gap *is* the leakage.
+3. **`industrial_fire` precision 0.242 is why it is suppressed** for model output. Three of four such predictions would be wrong.
+
+An ablation isolating how much is genuine thermal signal versus geography: [`docs/findings/2026-09-18-model-ablation.md`](docs/findings/2026-09-18-model-ablation.md). Headline: dropping latitude/longitude *improved* held-out macro F1 (0.571 → 0.629), and thermal channels alone still reach 0.452.
+
+---
+
+## Running it
+
+Requires Python 3.13+ and Node 24+. No Docker, no API keys, no hosting accounts.
 
 ### Backend
 
 ```bash
 cd backend
 python -m venv .venv
-.venv/Scripts/activate      # Windows; use source .venv/bin/activate on macOS/Linux
+.venv/Scripts/activate            # macOS/Linux: source .venv/bin/activate
 pip install -r requirements-dev.txt
-cp .env.example .env
-uvicorn app.main:app --reload --port 8000
 ```
 
-API docs are then at http://127.0.0.1:8000/docs.
+Build the database from live sources:
+
+```bash
+python -m app.pipeline ingest --window 7d
+python -m app.pipeline facilities
+python -m app.pipeline features
+python -m app.train --feature-set no_coords
+python -m app.pipeline status
+```
+
+`ingest` takes seconds. `facilities` is slow and resumable — Overpass rate-limits hard, so it fetches the highest-value tiles first and can be re-run to extend coverage. The committed tile cache means it can be skipped entirely.
+
+Serve:
+
+```bash
+python -m uvicorn app.main:app --reload --port 8000
+```
+
+Interactive API docs at http://127.0.0.1:8000/docs.
 
 ### Frontend
 
@@ -104,68 +146,74 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173. The dev server proxies `/api` to port 8000, so there is no CORS setup in development.
+http://localhost:5173. `/api` is proxied to port 8000, so there is no CORS setup in development.
 
-### Tests
+### Tests and evaluation
 
 ```bash
-cd backend && python -m pytest -q
-cd frontend && npm run typecheck
+cd backend
+python -m pytest -q          # 174 tests
+python -m evals.run          # 18 behavioural scenarios
 ```
 
----
-
-## Sample data and the offline demo
-
-With no `FIRMS_MAP_KEY` configured, the API serves a seeded set of eight realistic hotspots — Jamnagar, Vadinar, Talcher, Bhilai, Paradip, plus vegetation fires at Similipal and Bandipur and one deliberately ambiguous case near Visakhapatnam.
-
-Two reasons this exists:
-
-1. The dashboard and the deployment pipeline can be built and proven before ingestion lands.
-2. **It is the demo's safety net.** If venue networking fails, the dashboard still has data.
-
-Sample responses always report `data_source: "sample"`, and the UI shows a **◆ Sample data** chip. Seeded data can never be mistaken for live satellite observations.
+The evaluation suite asserts properties under adverse conditions — malformed feeds, unreachable sources, stale data, hostile field values, injection attempts, ambiguous evidence, and false-success paths. `python -m app.train --ablation` reproduces the feature-set comparison.
 
 ---
 
-## Secrets
+## Provenance
 
-The FIRMS key and the database URL live in `backend/.env` locally (gitignored) and in Render's environment settings in production. Neither is ever committed, and neither goes near frontend JavaScript — the FIRMS key is used only server-side.
+`GET /api/datasets` returns every source with its licence, update frequency and **stated limitations**. The dashboard renders it under "Sources & model".
 
-CI enforces this: a job fails the build if a key-shaped string or a tracked `.env` appears in the repo.
+Every collection response carries a `provenance` block, and the UI distinguishes three states that are easy to conflate and damaging to confuse:
+
+| State | Meaning |
+|---|---|
+| **● Live** | Newest detection is under 12 hours old |
+| **◆ Historical** | Real data, but the newest record is older |
+| **◆ Cached snapshot** | The API was unreachable; a committed snapshot is being shown |
+
+Cached data is never described as live.
+
+**Coverage is reported, not assumed.** A location whose industrial context has not been surveyed reports `not_surveyed` and is left unclassified. That is deliberately different from "no industry nearby" — treating a gap in our own collection as evidence of absence is the easiest way for a system like this to start lying.
 
 ---
 
-## Build status
+## Deployment
 
-| Phase | Work | Status |
+| Part | Host | Status |
 |---|---|---|
-| 0 | Scaffold, sample API, dashboard, CI, deploy config | ✅ Done |
-| 1 | FIRMS ingestion → database | Next |
-| 2 | Neon Postgres + PostGIS schema | |
-| 3 | OpenStreetMap industrial proximity enrichment | |
-| 4 | Persistence engine (baseline + deviation) | |
-| 5 | Train and serve the classifier | |
-| 6 | Evidence and confidence surfacing | |
-| 7 | Filters, timeline, analytics, export | |
-| 8 | Alerts, polish, offline snapshot | |
+| Dashboard | GitHub Pages | Live, auto-deploys on push |
+| API | Render (blueprint in [`render.yaml`](render.yaml)) | Not yet provisioned |
+| Database | Neon Postgres via `DATABASE_URL` | Optional; SQLite works |
+
+The deployed dashboard runs on the committed snapshot of real pipeline output, labelled as cached. It becomes live automatically once `VITE_API_BASE` points at a running API.
+
+### Secrets
+
+No credentials are required to run this project. `FIRMS_MAP_KEY` is supported but unnecessary — the regional archives are open. If a `DATABASE_URL` is used it lives in `backend/.env` (gitignored) or Render's environment. CI fails the build on a committed key, a credential-bearing URL, or a tracked `.env`.
+
+Ingestion errors are stored verbatim for operators but **redacted at the API boundary**, so a failed database connection cannot leak a password through the public audit endpoint.
 
 ---
 
-## Design notes
+## What is deliberately not done
 
-**Class colours are validated, not chosen by eye.** The three hues are categorical slots from a palette checked for colourblind separation across all pairs (worst CVD ΔE 9.4 dark / 9.2 light; normal-vision ΔE 20.9 / 24.0). Mapping is semantic: blue reads as routine and stable, orange as hot and urgent, aqua as vegetation.
-
-`unknown` has **no hue** — it renders as a hollow marker, because "unclassified" is the absence of a value rather than a fourth category. A grey fourth slot was tested and rejected: it measured ΔE 2.0 from the aqua under deuteranopia, meaning red-green colourblind viewers could not have told them apart.
-
-Colour is never the only channel. Markers differ in fill treatment, the anomaly class carries a halo, the legend names every class in text, and the detail panel states the classification in words.
+- **No PostGIS.** SQLite plus haversine and a grid index is sufficient at this volume and avoids a hosting dependency. `DATABASE_URL` switches to Postgres unchanged.
+- **No image/CNN model.** There is no reliable labelled image dataset for this task, and inventing one would be worse than not having it.
+- **No authentication.** The dashboard is public and read-only, and the API is GET-only. Any write endpoint must be authenticated before it ships.
+- **No rate limiting.** Result sizes and time ranges are bounded, which caps per-request cost, but a public deployment should sit behind a rate limiter.
+- **Land cover is approximate.** Nearest OSM parcel centroid within 2 km, not a containment test. A raster product such as ESA WorldCover would be materially better but requires registered access. Full geometry from Overpass measured 6.1 MiB for one 1° tile — roughly 1.8 GiB for India.
 
 ---
+
+## Documentation
+
+- [`CLAUDE.md`](CLAUDE.md) — project conventions and the facts established by measurement
+- [`docs/findings/`](docs/findings/) — measurements taken against live sources
+- [`docs/adr/`](docs/adr/) — architecture decisions and their reasoning
 
 ## References
 
 - NASA FIRMS — https://firms.modaps.eosdis.nasa.gov/
-- FIRMS API — https://firms.modaps.eosdis.nasa.gov/api/
-- OpenStreetMap — https://www.openstreetmap.org/
-
-Basemaps: Esri World Imagery and OpenStreetMap, both key-free.
+- OpenStreetMap — https://www.openstreetmap.org/ (© OpenStreetMap contributors, ODbL)
+- Basemaps: Esri World Imagery and OpenStreetMap, both key-free

@@ -1,55 +1,54 @@
 /**
- * Class presentation: colour, marker treatment and short label.
+ * Class presentation: colour, marker treatment, label.
  *
- * Colours are categorical slots 1-3 of the validated palette, and the mapping to
- * classes is semantic rather than arbitrary — blue reads as routine/stable,
- * orange as hot/urgent, aqua as vegetation.
+ * Colours are categorical slots 1-3 of a palette validated for colourblind
+ * separation across all pairs (worst CVD dE 9.4 dark / 9.2 light; normal-vision
+ * dE 20.9 / 24.0). The class-to-hue mapping is semantic, not arbitrary: blue
+ * reads as routine and stable, orange as hot and urgent, aqua as vegetation.
  *
- * `unknown` deliberately has NO hue. It renders as a hollow marker, because
- * "unclassified" is the absence of a value, not a fourth category. A grey fourth
- * slot was tried and rejected: it sits ΔE 2.0 from the aqua under deuteranopia,
+ * `unknown` has **no hue**. It renders hollow, because "not classified" is the
+ * absence of a value rather than a fourth category. A grey fourth slot was
+ * tested and rejected — it measured dE 2.0 from the aqua under deuteranopia,
  * i.e. indistinguishable for red-green colourblind viewers.
  *
- * Colour is never the only channel — every marker also differs in fill treatment,
- * and the legend plus the detail panel name the class in text.
+ * Colour is never the only channel: markers differ in fill treatment, the
+ * legend names every class in text, and the detail panel states it in words.
  */
 
 import type { ThermalClass } from "./types";
 
 export interface ClassStyle {
-  /** CSS custom property holding the hue, or null for the hollow treatment. */
-  colorVar: string | null;
+  cssVar: string | null;
   shortLabel: string;
-  /** Marker fill treatment — the secondary, non-colour encoding channel. */
   fill: "solid" | "hollow";
-  /** Outer halo, reserved for the anomaly class so it reads first on the map. */
-  halo: boolean;
+  /** Reserved for the anomaly class so it reads first among thousands of marks. */
+  emphasise: boolean;
 }
 
 export const CLASS_STYLES: Record<ThermalClass, ClassStyle> = {
   industrial_fire: {
-    colorVar: "--class-industrial-fire",
+    cssVar: "--class-industrial-fire",
     shortLabel: "Possible industrial fire",
     fill: "solid",
-    halo: true,
+    emphasise: true,
   },
   persistent_industrial: {
-    colorVar: "--class-persistent",
+    cssVar: "--class-persistent",
     shortLabel: "Persistent industrial source",
     fill: "solid",
-    halo: false,
+    emphasise: false,
   },
   natural_fire: {
-    colorVar: "--class-natural",
+    cssVar: "--class-natural",
     shortLabel: "Probable vegetation fire",
     fill: "solid",
-    halo: false,
+    emphasise: false,
   },
   unknown: {
-    colorVar: null,
-    shortLabel: "Unclassified",
+    cssVar: null,
+    shortLabel: "Not classified",
     fill: "hollow",
-    halo: false,
+    emphasise: false,
   },
 };
 
@@ -60,28 +59,60 @@ export const CLASS_ORDER: ThermalClass[] = [
   "unknown",
 ];
 
+export type Palette = Record<ThermalClass, { stroke: string; fill: string }>;
+
 /**
- * Leaflet class name for a marker.
+ * Resolve the palette to concrete colours.
  *
- * Styling goes through CSS rather than Leaflet's `color`/`fillColor` options on
- * purpose: those become SVG presentation attributes, which do not reliably
- * resolve `var()`. Driving fill and stroke from a stylesheet keeps the palette in
- * one place and lets the light/dark swap happen in CSS.
+ * Leaflet is run with `preferCanvas`, which is necessary at these data volumes
+ * — a few thousand SVG paths makes panning unusable. Canvas rendering cannot
+ * use CSS classes, so colours have to be read out of the custom properties once
+ * and handed to Leaflet as values. The stylesheet stays the single source of
+ * truth; this is the only place that reads it.
  */
-export function markerClass(cls: ThermalClass, selected: boolean): string {
-  return ["hd-marker", `hd-marker--${cls}`, selected ? "is-selected" : ""]
-    .filter(Boolean)
-    .join(" ");
+export function resolvePalette(root: HTMLElement = document.documentElement): Palette {
+  const computed = getComputedStyle(root);
+  const read = (name: string, fallback: string) =>
+    computed.getPropertyValue(name).trim() || fallback;
+
+  const surface = read("--surface-0", "#0d0d0d");
+  const muted = read("--ink-muted", "#898781");
+
+  const solid = (cssVar: string, fallback: string) => ({
+    stroke: surface,
+    fill: read(cssVar, fallback),
+  });
+
+  return {
+    industrial_fire: solid("--class-industrial-fire", "#d95926"),
+    persistent_industrial: solid("--class-persistent", "#3987e5"),
+    natural_fire: solid("--class-natural", "#199e70"),
+    // Hollow: stroked in muted ink with a near-transparent fill.
+    unknown: { stroke: muted, fill: "rgba(137,135,129,0.15)" },
+  };
 }
 
 /**
  * Marker radius from Fire Radiative Power.
  *
- * Square-root scaling so that *area* tracks magnitude — a linear radius would
- * exaggerate strong detections roughly quadratically. Clamped so a weak
- * detection stays clickable and a 500 MW event does not swallow the map.
+ * Square-root scaled so *area* tracks magnitude; a linear radius would
+ * exaggerate strong detections roughly quadratically. Tuned to the measured
+ * distribution — real FRP here is median ~1.6 MW and p99 ~18 MW, so the useful
+ * range is small numbers, not the hundreds an earlier draft assumed.
  */
 export function radiusFromFrp(frpMw: number): number {
-  const r = 4 + Math.sqrt(Math.max(frpMw, 0)) * 1.1;
-  return Math.min(Math.max(r, 5), 22);
+  const r = 3 + Math.sqrt(Math.max(frpMw, 0)) * 1.6;
+  return Math.min(Math.max(r, 3.5), 18);
+}
+
+/**
+ * Extra weight for recurring locations.
+ *
+ * Persistence is the single most informative signal this system has, so it is
+ * encoded visually rather than left buried in the detail panel.
+ */
+export function strokeWeightFromDays(distinctDays: number): number {
+  if (distinctDays >= 5) return 2.5;
+  if (distinctDays >= 3) return 1.75;
+  return 1;
 }
