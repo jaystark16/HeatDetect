@@ -626,9 +626,16 @@ body {
   letter-spacing: 0.04em;
 }
 
-/* A zero-recall class is a real limitation, so it is marked, not smoothed over. */
-.metrics__row--zero td {
+/* A class the model is not trusted to report is marked, not smoothed over. */
+.metrics__row--suppressed td {
   color: var(--status-critical);
+}
+
+/* Provenance group: positioning context for the drawer, which anchors to it. */
+.provenance {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 /* Leaflet's own surface must match ours, or the map flashes white on load. */
