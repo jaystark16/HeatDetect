@@ -1,0 +1,11 @@
+# --- Phase 0: API skeleton -------------------------------------------------
+fastapi==0.118.0
+uvicorn[standard]==0.37.0
+pydantic==2.11.9
+pydantic-settings==2.11.0
+
+# --- Phase 1: FIRMS ingestion ---------------------------------------------
+httpx==0.28.1
+
+# Phases 2+ (database, GIS, ML) add their own dependencies as they land.
+# Kept deliberately lean so Render's free-tier builds stay fast.

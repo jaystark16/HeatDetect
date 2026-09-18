@@ -1,0 +1,39 @@
+# --- Secrets (never commit) ---
+.env
+.env.local
+.env.*.local
+*.pem
+*_MAP_KEY*
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- Node ---
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# --- ML artifacts (large; keep only versioned releases) ---
+models/*.joblib
+models/*.pkl
+!models/.gitkeep
+
+# --- Data (raw dumps are large; seeded demo snapshot IS committed) ---
+data/raw/
+data/interim/
+!data/seed/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

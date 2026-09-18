@@ -1,0 +1,32 @@
+# Render blueprint for the HeatDetect API.
+#
+# In the Render dashboard: New → Blueprint → connect this repo. Render reads this
+# file and provisions the service. The two `sync: false` secrets must then be
+# pasted into the service's Environment tab — they are deliberately not in the
+# repo.
+services:
+  - type: web
+    name: heatdetect-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+
+    # Render polls this; it is also what the keep-warm workflow pings to stop the
+    # free tier spinning down before a demo.
+    healthCheckPath: /api/health
+
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13.5"
+
+      # Set in the dashboard, never committed.
+      - key: FIRMS_MAP_KEY
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+
+      # Replace with the deployed dashboard origin once the frontend has a URL.
+      - key: CORS_ORIGINS
+        value: http://localhost:5173
