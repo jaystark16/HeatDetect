@@ -12,7 +12,6 @@ from app.geo import (
     cell_centre,
     cell_id,
     haversine_m,
-    neighbour_cells,
 )
 
 
@@ -70,18 +69,6 @@ def test_cell_centre_is_inside_its_cell():
     assert cell_id(lat, lon) == cell
     assert abs(lat - 23.755) < GRID_DEGREES
     assert abs(lon - 86.405) < GRID_DEGREES
-
-
-def test_neighbour_cells_includes_self_and_ring():
-    cell = cell_id(23.755, 86.405)
-    neighbours = neighbour_cells(cell, ring=1)
-    assert cell in neighbours
-    assert len(neighbours) == 9
-    assert len(set(neighbours)) == 9
-
-
-def test_neighbour_cells_ring_two():
-    assert len(neighbour_cells(cell_id(23.755, 86.405), ring=2)) == 25
 
 
 @pytest.mark.parametrize(

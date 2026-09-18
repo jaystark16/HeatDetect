@@ -40,7 +40,6 @@ from typing import Iterable, Literal
 import httpx
 
 from ..config import settings
-from ..geo import cell_id
 
 logger = logging.getLogger(__name__)
 
@@ -423,10 +422,3 @@ def cached_tile_keys() -> set[str]:
             keys.add(name)
     return keys
 
-
-def facility_cell(facility: Facility) -> str:
-    return cell_id(facility.latitude, facility.longitude)
-
-
-def parcel_cell(parcel: LandParcel) -> str:
-    return cell_id(parcel.latitude, parcel.longitude)

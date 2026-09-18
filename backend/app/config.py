@@ -33,10 +33,6 @@ class Settings(BaseSettings):
     # "analysis area" in the UI rather than "India" for that reason.
     area_bbox: str = "68.0,6.0,98.0,37.5"
 
-    # Detections older than this are excluded from "recent" views. The open
-    # archives only span 7 days, so this is an upper bound, not a promise.
-    recent_window_hours: int = 72
-
     # Overpass is a donated community service that rate-limits aggressively
     # (measured: 6 of 12 sequential point queries failed). The pipeline tiles the
     # area, sleeps between requests and caches to disk. Do not lower the delay.

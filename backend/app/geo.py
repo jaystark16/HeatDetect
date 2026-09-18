@@ -59,21 +59,6 @@ def cell_centre(cell: str) -> tuple[float, float]:
     return lat, lon
 
 
-def neighbour_cells(cell: str, ring: int = 1) -> list[str]:
-    """Cells within `ring` steps, inclusive of `cell` itself.
-
-    Used to count nearby activity: a source at a cell edge should still see its
-    own cluster, which a single-cell count would miss.
-    """
-    lat_idx_s, lon_idx_s = cell.split(":")
-    lat_idx, lon_idx = int(lat_idx_s), int(lon_idx_s)
-    return [
-        f"{lat_idx + dy}:{lon_idx + dx}"
-        for dy in range(-ring, ring + 1)
-        for dx in range(-ring, ring + 1)
-    ]
-
-
 def bbox_contains(
     bbox: tuple[float, float, float, float], latitude: float, longitude: float
 ) -> bool:

@@ -32,7 +32,6 @@
 
   --radius: 6px;
   --font: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
 }
 
 :root[data-theme="light"] {

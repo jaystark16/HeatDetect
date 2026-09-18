@@ -71,10 +71,6 @@ class LabelDecision:
     rule_version: str
     rationale: list[dict[str, object]] = field(default_factory=list)
 
-    @property
-    def is_confident(self) -> bool:
-        return self.label != "unknown"
-
 
 def _criterion(name: str, passed: bool, **values: object) -> dict[str, object]:
     return {"criterion": name, "passed": passed, **values}

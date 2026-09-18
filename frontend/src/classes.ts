@@ -21,8 +21,6 @@ export interface ClassStyle {
   cssVar: string | null;
   shortLabel: string;
   fill: "solid" | "hollow";
-  /** Reserved for the anomaly class so it reads first among thousands of marks. */
-  emphasise: boolean;
 }
 
 export const CLASS_STYLES: Record<ThermalClass, ClassStyle> = {
@@ -30,25 +28,21 @@ export const CLASS_STYLES: Record<ThermalClass, ClassStyle> = {
     cssVar: "--class-industrial-fire",
     shortLabel: "Possible industrial fire",
     fill: "solid",
-    emphasise: true,
   },
   persistent_industrial: {
     cssVar: "--class-persistent",
     shortLabel: "Persistent industrial source",
     fill: "solid",
-    emphasise: false,
   },
   natural_fire: {
     cssVar: "--class-natural",
     shortLabel: "Probable vegetation fire",
     fill: "solid",
-    emphasise: false,
   },
   unknown: {
     cssVar: null,
     shortLabel: "Not classified",
     fill: "hollow",
-    emphasise: false,
   },
 };
 
