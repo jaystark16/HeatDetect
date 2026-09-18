@@ -65,9 +65,17 @@ jobs:
             exit 1
           fi
 
+      # Fake credentials are legitimate in the redaction tests and in the
+      # comment documenting what the redactor matches. Rather than excluding
+      # those files wholesale — which would let a real leak hide in a test —
+      # each deliberate occurrence must carry an explicit marker. A real leak
+      # will not have one.
       - name: No committed database URL with credentials
         run: |
-          if git grep -nIE 'postgres(ql)?://[^:]+:[^@]+@' -- . ':!*.example' ':!docs/**'; then
+          hits=$(git grep -nIE 'postgres(ql)?://[^:]+:[^@]+@' -- . ':!*.example' ':!docs/**' \
+                 | grep -v 'pragma: fake-credential' || true)
+          if [ -n "$hits" ]; then
+            echo "$hits"
             echo "::error::A database URL with a password looks committed."
             exit 1
           fi

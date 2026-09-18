@@ -35,9 +35,7 @@ def client(tmp_path, monkeypatch):
 
 
 def test_redacts_a_postgres_password():
-    text = (
-        "connection failed: postgresql://heat:s3cr3tpw@ep-cool-1.aws.neon.tech/db"
-    )
+    text = "connection failed: postgresql://heat:s3cr3tpw@ep-cool-1.aws.neon.tech/db"  # pragma: fake-credential
     cleaned = redact(text)
     assert "s3cr3tpw" not in cleaned
     assert "heat:" not in cleaned
@@ -79,7 +77,7 @@ def test_runs_endpoint_redacts_stored_credentials(client):
                 rows_accepted=0,
                 rows_rejected=0,
                 rows_inserted=0,
-                error="could not connect: postgresql://admin:hunter2@db.internal/heat",
+                error="could not connect: postgresql://admin:hunter2@db.internal/heat",  # pragma: fake-credential
             )
         )
 

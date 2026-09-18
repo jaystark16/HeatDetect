@@ -601,7 +601,8 @@ def get_model_info(trained: ml.TrainedModel | None) -> ModelInfo:
     )
 
 
-# Matches a URL carrying inline credentials, e.g. postgresql://user:pw@host/db.
+# Matches a URL carrying inline credentials, e.g.
+# postgresql://user:pw@host/db  (pragma: fake-credential)
 _CREDENTIAL_URL = re.compile(r"(?P<scheme>[a-z0-9+]+)://[^:/\s]+:[^@/\s]+@")
 
 # Matches long hex runs, the shape of an API key such as a FIRMS MAP_KEY.
