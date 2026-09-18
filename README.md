@@ -29,7 +29,7 @@ So the system computes a per-location baseline from its detection history and sc
 
 This matters more than any feature, so it is stated up front.
 
-**It can** detect and monitor coal-seam fires, coal-handling and mining areas, power stations and industrial belts. Measured: 220 locations recur on 4+ distinct days in a 7-day window, and every persistent location checked had mapped industry within 5 km.
+**It can** detect and monitor coal-seam fires, coal-handling and mining areas, power stations and industrial belts. Measured over a 7-day window: **225 of 2,798 active locations recur on 4 or more distinct days**, 37 on all seven, and every persistent location checked had mapped industry within 5 km.
 
 **It cannot** monitor refinery gas flaring. Zero detections landed within 5 km of the Jamnagar or Vadinar refineries in a 24-hour window, despite both being mapped in OSM. Active-fire products are tuned for biomass burning; flares are largely why VIIRS **Nightfire** exists as a separate product, and its full data requires a licence application.
 
@@ -68,6 +68,8 @@ OpenStreetMap via Overpass (cached, committed)
 | Database | SQLite by default; Postgres when `DATABASE_URL` is set |
 | Data | NASA FIRMS, OpenStreetMap |
 
+Current database: **7,479 detections** across **2,798 locations**, enriched with **39,204 industrial features** and **74,530 land parcels** from 53 cached OSM tiles. **2,432 of 2,798 locations (87%) have surveyed industrial context**; the remaining 366 report *not classified* rather than being assumed empty.
+
 There is **no LLM in this system**, deliberately — see [ADR 0007](docs/adr/0007-no-llm.md). Evidence sentences are templates filled from computed values, so they cannot fabricate.
 
 ---
@@ -84,24 +86,46 @@ Four classes: `industrial_fire`, `persistent_industrial`, `natural_fire`, `unkno
 
 ### Honest model performance
 
-Spatial hold-out by 1° block, so the same facility cannot appear in train and test.
+Spatial hold-out by 1° geographic block, so the same facility cannot appear in
+both train and test. A random row split would leak badly — one coal-seam fire
+contributes dozens of rows.
+
+<!-- METRICS:START -->
+
+Model `rf-20260918-no_coords-rule-v1-488beffa` · feature set `no_coords` · 4791 train / 1984 test rows across 116/50 geographic blocks.
 
 | class | precision | recall | F1 | support |
 |---|---|---|---|---|
-| `industrial_fire` | 0.242 | 0.320 | 0.276 | 25 |
-| `persistent_industrial` | 0.677 | 0.527 | 0.593 | 514 |
-| `natural_fire` | 1.000 | 0.991 | 0.996 | 681 |
-| `unknown` | 0.570 | 0.717 | 0.635 | 434 |
+| `industrial_fire` ⚠ | 0.087 | 0.234 | 0.127 | 77 |
+| `persistent_industrial` | 0.803 | 0.555 | 0.656 | 1196 |
+| `natural_fire` | 0.904 | 0.972 | 0.937 | 282 |
+| `unknown` ⚠ | 0.382 | 0.576 | 0.459 | 429 |
 
-macro F1 **0.625**. Overall accuracy is deliberately not reported: the classes are heavily imbalanced, so it would flatter the model while hiding that the most important class performs worst.
+macro F1 **0.545**. Overall accuracy is deliberately not reported: the classes are heavily imbalanced, so a single figure would flatter the model while hiding that the rarest class performs worst.
 
-Three caveats that belong next to those numbers:
+⚠ marks classes below the 0.5 precision floor, which the API **suppresses** rather than reports: `industrial_fire` (precision 0.087), `unknown` (precision 0.382). Most such predictions would be wrong, so they are returned as *not classified* and findings for those classes come only from the deterministic rules.
 
-1. **Labels are programmatic heuristics, not verified ground truth.** These metrics measure agreement with a documented rule set, not correctness against reality.
-2. **`natural_fire` precision of 1.000 is leakage, not skill.** The label requires >5 km from industry and the model is handed distance directly. With proximity removed it falls to 0.747 — that gap *is* the leakage.
-3. **`industrial_fire` precision 0.242 is why it is suppressed** for model output. Three of four such predictions would be wrong.
+Most influential features: `distance_to_facility_m` 0.270, `facilities_within_5km` 0.219, `land_cover_barren` 0.115, `land_cover_industrial` 0.058, `land_cover_unknown` 0.055.
 
-An ablation isolating how much is genuine thermal signal versus geography: [`docs/findings/2026-09-18-model-ablation.md`](docs/findings/2026-09-18-model-ablation.md). Headline: dropping latitude/longitude *improved* held-out macro F1 (0.571 → 0.629), and thermal channels alone still reach 0.452.
+*Labels are programmatic heuristics derived from multi-day persistence, not verified ground truth. These figures measure agreement with a documented rule set under a spatial hold-out — a consistency check, not validation against reality.*
+
+<sub>Generated from `backend/models/metrics.json` by `scripts/sync_docs.py`. Do not edit by hand.</sub>
+
+<!-- METRICS:END -->
+
+Two caveats that belong beside those numbers:
+
+1. **`natural_fire` scores are partly leakage, not skill.** The label requires a
+   location to be more than 5 km from mapped industry, and the model is handed
+   `distance_to_facility_m` directly. With proximity features removed its
+   precision falls from 0.904 to 0.451 — that gap *is* the leakage.
+2. **The `full` vs `no_coords` ordering is not stable.** Across three coverage
+   levels the macro-F1 gap flipped sign twice (0.571→0.629, then 0.570→0.545).
+   The difference is within noise and is not evidence for either. `no_coords`
+   ships because it is the only configuration with non-zero `industrial_fire`
+   recall and because it cannot memorise specific locations.
+
+An ablation isolating how much is genuine thermal signal versus geography: [`docs/findings/2026-09-18-model-ablation.md`](docs/findings/2026-09-18-model-ablation.md). Headline: with **only** the ten thermal and geometry features — no proximity, no land cover, no coordinates — the model still reaches macro F1 0.416 against a four-class chance of about 0.25, and `persistent_industrial` F1 0.703. So the classifier is not purely a geography lookup, though context features roughly double its skill on the other classes.
 
 ---
 

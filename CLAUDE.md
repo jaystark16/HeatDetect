@@ -1,8 +1,9 @@
 # HeatDetect — project instructions
 
 SIH26162: classify satellite thermal anomalies as industrial vs natural, and monitor
-persistent thermal sources. `docs/SIH26162_spec.md` summarises the product spec; the
-team's PDF is the source of truth for scope.
+persistent thermal sources. The team's planning PDF is the product spec and the
+source of truth for scope; measured deviations from it are recorded in
+`docs/findings/` and `docs/adr/`.
 
 ## The one rule that matters
 
@@ -15,7 +16,7 @@ confident sentence that isn't backed by data. Specifically:
 - Never label derived output as observed. Every record carries `kind`
   (`observed` / `derived` / `synthetic`) and a `dataset_id` from `app/datasets.py`.
 - Never say an action succeeded because it was attempted. Report what came back:
-  "returned 7,279 rows", not "successfully ingested".
+  "returned 7,479 rows", not "successfully ingested".
 
 A thermal anomaly is **evidence of unusual heat, not proof of a fire or accident**.
 All user-facing copy stays hedged: "possible", "candidate", "consistent with".
@@ -29,11 +30,17 @@ OSM industrial + landuse (Overpass) ├─► SQLite/Postgres ─► features �
 ```
 
 - `app/datasets.py` — provenance catalogue. Every source declares licence and limitations.
-- `app/ingest/` — one module per source. Strict parsing, counted rejects.
-- `app/features/` — deterministic feature computation. No model here.
-- `app/classify/rules.py` — authoritative when history exists. Transparent thresholds.
-- `app/classify/model.py` — supervised model for the *single-observation* case only.
+- `app/ingest/firms.py` — FIRMS CSV client. Strict parsing, rejects counted by reason.
+- `app/ingest/osm.py` — Overpass client with a committed tile cache and backoff.
+- `app/geo.py` — pure geographic helpers (haversine, grid cells). No I/O.
+- `app/features.py` — deterministic persistence statistics and spatial context.
+- `app/labels.py` — the rule engine. Authoritative when history exists; explicit thresholds.
+- `app/model.py` — single-observation classifier, feature schema, abstention, suppression.
+- `app/train.py` — reproducible training, spatial split, ablation (`--ablation`).
 - `app/evidence.py` — evidence sentences built from real values, via templates.
+- `app/service.py` — data access plus the classification authority rules.
+- `app/main.py` — routing and request validation only.
+- `app/pipeline.py` — the CLI that runs ingestion, enrichment and feature stages.
 
 **Deterministic logic owns facts.** Distances, persistence, counts, filtering and
 thresholds are code, not model output. The model only estimates a class for a lone
@@ -48,7 +55,8 @@ Do not re-litigate these from intuition; they were measured (see
 `docs/findings/2026-09-18-feed-characterisation.md`):
 
 - The open `/data/active_fire/` archives need **no MAP_KEY**. The `/api/` endpoints do.
-- India-bbox 7-day volume is ~7,300 detections; ~2,700 distinct ~1 km cells.
+- India-bbox 7-day volume is ~7,500 detections across ~2,800 distinct ~1 km cells;
+  225 cells recur on 4+ distinct days and 37 on all seven.
 - **Refinery gas flares are largely absent** from active-fire products. The detectable
   persistent sources are coal-seam fires (Jharia), coal/industrial belts and power
   stations. Scope claims accordingly.
@@ -59,20 +67,33 @@ Do not re-litigate these from intuition; they were measured (see
 
 ## Commands
 
+All backend commands run from `backend/` with that venv's interpreter.
+
 ```bash
-# backend
-cd backend && .venv/Scripts/python -m pytest -q          # tests
-cd backend && .venv/Scripts/python -m uvicorn app.main:app --reload --port 8000
+# verify
+python -m pytest -q                      # unit, integration, security, evals
+python -m evals.run                      # behavioural report on its own
+python -m app.train --ablation           # feature-set comparison, saves nothing
 
-# pipeline (writes to backend/data/heatdetect.db)
-cd backend && .venv/Scripts/python -m app.pipeline ingest --window 7d
-cd backend && .venv/Scripts/python -m app.pipeline facilities   # cached Overpass prefetch
-cd backend && .venv/Scripts/python -m app.pipeline features
-cd backend && .venv/Scripts/python -m app.classify.train
+# pipeline (writes backend/data/heatdetect.db, which is NOT tracked)
+python -m app.pipeline ingest --window 7d
+python -m app.pipeline facilities        # Overpass prefetch; slow, resumable
+python -m app.pipeline facilities --cache-only   # warm the cache without touching the DB
+python -m app.pipeline features          # cell stats, context, labels
+python -m app.train --feature-set no_coords
+python -m app.pipeline status            # what is actually in the database
 
-# evaluation
-cd backend && .venv/Scripts/python -m evals.run
+# serve
+python -m uvicorn app.main:app --reload --port 8000
+```
 
+```bash
+# repo root: regenerate the README metrics block from models/metrics.json
+backend/.venv/Scripts/python scripts/sync_docs.py
+backend/.venv/Scripts/python scripts/export_snapshot.py   # static snapshot for Pages
+```
+
+```bash
 # frontend
 cd frontend && npm run dev
 cd frontend && npm run typecheck && npm run build
@@ -89,8 +110,10 @@ cd frontend && npm run typecheck && npm run build
 
 ## Things that are deliberately not done
 
-- No PostGIS yet. SQLite + haversine is sufficient at this data volume and avoids a
-  hosting dependency. `DATABASE_URL` switches to Postgres when it exists.
+- No PostGIS. SQLite plus haversine and a grid index is sufficient at this volume
+  and avoids a hosting dependency. `DATABASE_URL` switches to Postgres (psycopg 3);
+  the schema and every query are dialect-tested in `tests/test_postgres_compat.py`,
+  but **no query has been run against a live Postgres server**.
 - No image/CNN model. There is no reliable labelled image dataset for this task.
 - No authentication. The dashboard is public read-only. Any write endpoint must be
   protected before it ships.

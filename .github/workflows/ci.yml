@@ -56,6 +56,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
       # The FIRMS key is a 32-character hex string. Catching it here is cheaper
       # than rotating it after it reaches a public repository.
       - name: No committed API keys
@@ -79,6 +83,13 @@ jobs:
             echo "::error::A database URL with a password looks committed."
             exit 1
           fi
+
+      # The reported metrics went stale three times during development, once
+      # badly enough that the UI asserted a figure that had since changed.
+      # The README block is generated; this makes drift a build failure.
+      - name: README metrics match the trained model
+        # stdlib only, so no install step is needed.
+        run: python scripts/sync_docs.py --check
 
       - name: No tracked .env
         run: |

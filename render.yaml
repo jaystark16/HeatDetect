@@ -1,33 +1,59 @@
 # Render blueprint for the HeatDetect API.
 #
-# In the Render dashboard: New → Blueprint → connect this repo. Render reads this
-# file and provisions the service. The two `sync: false` secrets must then be
-# pasted into the service's Environment tab — they are deliberately not in the
-# repo.
+# Deploy: Render dashboard → New → Blueprint → connect this repository.
+# Render reads this file and provisions the service. No secrets are required.
+#
+# The build provisions its own database from live sources. That is necessary,
+# not a convenience: `backend/data/heatdetect.db` is deliberately untracked
+# (it is 15 MiB and fully regenerable), and Render starts with an empty disk, so
+# without this the service would come up healthy and serve zero detections.
+#
+# It works without any credential because the FIRMS regional archives are open
+# and the OpenStreetMap tile cache is committed to the repository — so the build
+# needs no API key and never touches rate-limited Overpass.
 services:
   - type: web
     name: heatdetect-api
     runtime: python
     plan: free
     rootDir: backend
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
 
-    # Render polls this; it is also what the keep-warm workflow pings to stop the
-    # free tier spinning down before a demo.
+    buildCommand: |
+      pip install -r requirements.txt
+      python -m app.pipeline ingest --window 7d
+      python -m app.pipeline features
+      python -m app.pipeline status
+
+    # Single worker on purpose: the free tier has 512 MiB, and each worker loads
+    # its own copy of scikit-learn plus the 2.4 MiB forest.
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --workers 1
+
+    # Returns 200 even in a degraded state (data present but unlabelled, say) so
+    # a data problem does not read as an outage. The `status` and `notes` fields
+    # carry the detail. Also the endpoint the keep-warm workflow pings, to stop
+    # the free tier spinning down before a demo.
     healthCheckPath: /api/health
 
     envVars:
       - key: PYTHON_VERSION
         value: "3.13.5"
 
-      # Set in the dashboard, never committed.
+      # OPTIONAL. The project does not need a FIRMS key — the regional archives
+      # used here are open, and only the /api/ endpoints require one. Left empty
+      # so Render does not prompt for a value that changes nothing.
       - key: FIRMS_MAP_KEY
-        sync: false
-      - key: DATABASE_URL
-        sync: false
+        value: ""
 
-      # The deployed dashboard plus the local dev server. Add a Cloudflare Pages
-      # origin here too if the frontend moves there.
+      # OPTIONAL. Leave unset to use SQLite on the instance disk, which is
+      # rebuilt by the build command on every deploy. Set it to a Postgres URL
+      # (Neon, Render Postgres) to persist data across deploys; psycopg 3 is
+      # already a dependency and both the `postgres://` and `postgresql://`
+      # forms are normalised. Mark it `sync: false` in the dashboard if used, so
+      # the credential is never committed.
+      - key: DATABASE_URL
+        value: ""
+
+      # Origins allowed to call this API from a browser. The API is GET-only and
+      # has no credentials, but the list is explicit rather than a wildcard.
       - key: CORS_ORIGINS
         value: https://jaystark16.github.io,http://localhost:5173

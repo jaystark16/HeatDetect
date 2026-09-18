@@ -23,6 +23,8 @@ how much of the skill is geography memorisation?
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import logging
 import sys
 from collections import Counter
@@ -287,12 +289,34 @@ def main(argv: list[str] | None = None) -> int:
     print_report(metrics)
     print("\n(accuracy intentionally omitted: classes are heavily imbalanced)")
 
+    # Version includes a fingerprint of the training set and the resulting
+    # metrics, not just the date. Two runs on the same day with the same feature
+    # set previously produced an identical version string, which made a stale
+    # model indistinguishable from a fresh one — a confusion that actually
+    # happened during development and cost time to diagnose.
+    fingerprint = hashlib.sha1(
+        json.dumps(
+            {
+                "rows": metrics["training_rows"],
+                "test_rows": metrics["test_rows"],
+                "blocks": [metrics["train_blocks"], metrics["test_blocks"]],
+                "distribution": metrics["label_distribution"],
+                "macro_f1": round(metrics["macro_f1"], 6),
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()[:8]
+
+    trained_at = datetime.now(timezone.utc)
     model = TrainedModel(
         estimator=estimator,
         feature_names=FEATURE_SETS[args.feature_set],
         classes=list(estimator.classes_),
-        model_version=f"rf-{datetime.now(timezone.utc):%Y%m%d}-{args.feature_set}-{LABEL_RULE_VERSION}",
-        trained_at=datetime.now(timezone.utc),
+        model_version=(
+            f"rf-{trained_at:%Y%m%d}-{args.feature_set}-"
+            f"{LABEL_RULE_VERSION}-{fingerprint}"
+        ),
+        trained_at=trained_at,
         metrics=metrics,
         feature_set=args.feature_set,
     )

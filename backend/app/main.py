@@ -34,6 +34,7 @@ from .schemas import (
     HotspotDetail,
     IngestRunInfo,
     ModelInfo,
+    SearchResponse,
     ThermalClass,
 )
 from .service import HotspotFilters
@@ -279,6 +280,19 @@ def hotspot_detail(detection_id: str) -> HotspotDetail:
             status_code=404, detail=f"No detection with id {detection_id!r}"
         )
     return detail
+
+
+@app.get("/api/search", response_model=SearchResponse, tags=["hotspots"])
+def search(
+    q: Annotated[str, Query(min_length=1, max_length=120, description="Coordinates or a facility name")],
+    limit: Annotated[int, Query(ge=1, le=25)] = 10,
+) -> SearchResponse:
+    """Resolve free text to map locations.
+
+    Returns an empty result with an explanatory `note` rather than a guess when
+    nothing matches — a near-miss presented confidently is worse than nothing.
+    """
+    return service.search(_engine(), q, limit)
 
 
 @app.get("/api/analytics", response_model=Analytics, tags=["analytics"])

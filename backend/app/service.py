@@ -37,6 +37,7 @@ from .db import (
     cell_labels,
     cell_stats,
     detections,
+    facilities,
     ingest_runs,
 )
 from .evidence import CAUTION, build_evidence
@@ -58,6 +59,8 @@ from .schemas import (
     Observation,
     Persistence,
     Provenance,
+    SearchMatch,
+    SearchResponse,
     SpatialContext,
     ThermalClass,
 )
@@ -551,6 +554,112 @@ def get_analytics(engine: Engine) -> Analytics:
         persistent_cells=int(persistent),
         provenance=provenance,
     )
+
+
+# --------------------------------------------------------------- search --
+
+# "23.755, 86.405" or "23.755 86.405" — decimal degrees, comma or space.
+_COORD = re.compile(
+    r"^\s*(?P<lat>-?\d{1,2}(?:\.\d+)?)\s*[,\s]\s*(?P<lon>-?\d{1,3}(?:\.\d+)?)\s*$"
+)
+
+SEARCH_HELP = (
+    "Search accepts decimal coordinates (e.g. 23.755, 86.405) or the name of a "
+    "mapped industrial facility (e.g. Belpahar). Facility names come from "
+    "OpenStreetMap, so coverage is uneven and many sites are unnamed."
+)
+
+
+def _escape_like(text: str) -> str:
+    """Escape SQL LIKE wildcards in user input.
+
+    Without this, a query of "%" matches every named facility, and "_" matches
+    any single character. Parameter binding prevents injection but does not stop
+    the value being interpreted as a pattern, which is a different bug with the
+    same root cause: treating user text as syntax.
+    """
+    return text.replace("\\", "\\\\").replace("%", "\%").replace("_", "\_")
+
+
+def search(engine: Engine, query: str, limit: int = 10) -> SearchResponse:
+    """Resolve free text to places the user can navigate to.
+
+    Deliberately narrow: coordinates and mapped facility names, nothing else.
+    A fuzzy free-text search over a dataset this sparse would mostly return
+    confident-looking near-misses, which is worse than returning nothing.
+    """
+    cleaned = query.strip()
+    if not cleaned:
+        return SearchResponse(query=query, count=0, matches=[], note=SEARCH_HELP)
+
+    matches: list[SearchMatch] = []
+
+    coord = _COORD.match(cleaned)
+    if coord:
+        latitude = float(coord.group("lat"))
+        longitude = float(coord.group("lon"))
+        if -90 <= latitude <= 90 and -180 <= longitude <= 180:
+            matches.append(
+                SearchMatch(
+                    kind="coordinates",
+                    label=f"{latitude:.4f}, {longitude:.4f}",
+                    detail="Coordinates parsed from the query",
+                    latitude=latitude,
+                    longitude=longitude,
+                )
+            )
+        else:
+            return SearchResponse(
+                query=query,
+                count=0,
+                matches=[],
+                note=(
+                    "Those coordinates are out of range. Latitude must be between "
+                    "-90 and 90, longitude between -180 and 180."
+                ),
+            )
+
+    # Facility-name lookup. Only named facilities are searchable; an unnamed
+    # `landuse=industrial` polygon has nothing to match against.
+    if not matches:
+        pattern = f"%{_escape_like(cleaned)}%"
+        with engine.connect() as conn:
+            rows = conn.execute(
+                select(
+                    facilities.c.name,
+                    facilities.c.category,
+                    facilities.c.latitude,
+                    facilities.c.longitude,
+                )
+                .where(facilities.c.name.isnot(None))
+                .where(facilities.c.name.ilike(pattern, escape="\\"))
+                .order_by(func.length(facilities.c.name))
+                .limit(limit)
+            ).all()
+
+        matches.extend(
+            SearchMatch(
+                kind="facility",
+                label=row.name,
+                detail=f"Mapped {row.category} facility (OpenStreetMap)",
+                latitude=row.latitude,
+                longitude=row.longitude,
+            )
+            for row in rows
+        )
+
+    if not matches:
+        return SearchResponse(
+            query=query,
+            count=0,
+            matches=[],
+            note=(
+                f"No mapped facility name contains {cleaned!r}, and it is not a "
+                f"coordinate pair. {SEARCH_HELP}"
+            ),
+        )
+
+    return SearchResponse(query=query, count=len(matches), matches=matches)
 
 
 def get_datasets() -> list[DatasetInfo]:

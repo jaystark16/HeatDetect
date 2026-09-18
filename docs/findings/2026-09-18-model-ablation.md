@@ -1,123 +1,140 @@
-# Single-observation model: ablation results, 2026-09-18
+# Single-observation model: ablation results
 
 Reproduce with `backend/.venv/Scripts/python -m app.train --ablation`.
 
 Identical data, identical spatial split, identical hyperparameters. Only the
 feature set differs.
 
-**Run conditions:** 5,248 detections from surveyed cells (19 of 117 OSM tiles
-cached). Spatial hold-out by 1° block: 3,594 train rows / 1,654 test rows across
-43 train / 18 test blocks. Label distribution `persistent_industrial` 2,534,
-`unknown` 1,227, `natural_fire` 1,159, `industrial_fire` 328.
+**Run conditions (final, frozen):** 6,775 detections from surveyed cells, 53 of
+117 OSM tiles cached (2,432 of 2,798 cells surveyed). Spatial hold-out by 1°
+block: 4,791 train / 1,984 test rows across 116 train / 50 test blocks. Label
+distribution, as test-fold rows (and as distinct cells): `persistent_industrial` 1,196 (174 cells), `unknown` 429 (1,325), `natural_fire` 282 (1,280), `industrial_fire` 77 (19).
 
 ## Summary
 
 | Feature set | Features | macro F1 | `industrial_fire` F1 |
 |---|---|---|---|
-| `full` | 23 | 0.571 | 0.000 |
-| **`no_coords`** *(shipped)* | 21 | **0.629** | **0.300** |
-| `thermal_only` | 10 | 0.452 | 0.000 |
+| `full` | 23 | 0.570 | 0.000 |
+| **`no_coords`** *(shipped)* | 21 | 0.545 | **0.127** |
+| `thermal_only` | 10 | 0.416 | 0.059 |
 
-### `no_coords` per class
+### `no_coords` per class (the shipped model)
 
 | class | precision | recall | F1 | support |
 |---|---|---|---|---|
-| `industrial_fire` | 0.257 | 0.360 | 0.300 | 25 |
-| `persistent_industrial` | 0.674 | 0.527 | 0.592 | 514 |
-| `natural_fire` | 1.000 | 0.991 | 0.996 | 681 |
-| `unknown` | 0.566 | 0.707 | 0.629 | 434 |
+| `industrial_fire` | 0.087 | 0.234 | 0.127 | 77 |
+| `persistent_industrial` | 0.803 | 0.555 | 0.656 | 1,196 |
+| `natural_fire` | 0.904 | 0.972 | 0.937 | 282 |
+| `unknown` | 0.382 | 0.576 | 0.459 | 429 |
 
 ### `thermal_only` per class
 
 | class | precision | recall | F1 | support |
 |---|---|---|---|---|
-| `industrial_fire` | 0.000 | 0.000 | 0.000 | 25 |
-| `persistent_industrial` | 0.682 | 0.654 | 0.667 | 514 |
-| `natural_fire` | 0.747 | 0.893 | 0.813 | 681 |
-| `unknown` | 0.403 | 0.274 | 0.326 | 434 |
+| `industrial_fire` | 0.043 | 0.091 | 0.059 | 77 |
+| `persistent_industrial` | 0.766 | 0.649 | 0.703 | 1,196 |
+| `natural_fire` | 0.451 | 0.759 | 0.566 | 282 |
+| `unknown` | 0.381 | 0.298 | 0.335 | 429 |
 
-## Finding 1 — dropping coordinates *improves* generalisation
+## Finding 1 — the `full` vs `no_coords` gap is noise, and we were briefly fooled by it
 
-Removing latitude and longitude raised held-out macro F1 from **0.571 to 0.629**.
+This is the most important methodological lesson in the project, so it is
+recorded in full rather than tidied away.
 
-This is the cleanest result in the set. Coordinates let a tree memorise "this
-exact place is industrial", which cannot transfer to an unseen region — and
-because the hold-out is by geographic block, the test set *is* unseen regions, so
-the memorisation is punished rather than rewarded. In the `full` model those two
-features carried roughly a third of total importance, spent on something that
-actively hurt.
+The ablation was run at three coverage levels as the OSM tile cache grew. The
+sign of the macro-F1 difference between `full` and `no_coords` **flipped twice**:
 
-**Decision:** `no_coords` ships. It is both more honest and measurably better.
+| Coverage | Train rows | `full` | `no_coords` | Better |
+|---|---|---|---|---|
+| 10 tiles | 3,804 | 0.620 | 0.580 | `full` |
+| 19 tiles | 5,248 | 0.571 | 0.629 | `no_coords` |
+| 53 tiles | 6,775 | 0.570 | 0.545 | `full` |
+
+At the 19-tile run this repository recorded a confident conclusion — "dropping
+coordinates *improves* generalisation" — with the 0.058 gap as evidence. The
+next run reversed it. A difference that changes sign when the dataset grows is
+**not a result**; it is variance being read as signal.
+
+**Corrected conclusion:** coordinates make no reliable difference to macro F1 on
+this data. `no_coords` still ships, on two grounds that do not depend on that
+unstable number:
+
+1. It is the only configuration with **non-zero `industrial_fire` recall** in
+   every run. `full` scores exactly 0.000 for that class at both 10 and 53
+   tiles.
+2. Latitude and longitude can only be used to memorise specific places, which
+   cannot transfer to an unsurveyed region. That is an argument from what the
+   feature *can* represent, not from a metric.
 
 ## Finding 2 — there is genuine thermal signal
 
-With **only** ten thermal and geometry features — no proximity, no land cover, no
-coordinates — the model reaches macro F1 0.452 and `natural_fire` F1 0.813.
-Four-class chance is around 0.25.
+With **only** the ten thermal and geometry features — no proximity, no land
+cover, no coordinates — the model reaches macro F1 0.416 and
+`persistent_industrial` F1 0.703. Four-class chance is around 0.25.
 
-Importance within `thermal_only`: `brightness_k` 0.176, `brightness_long_k`
-0.161, `dual_band_delta_k` 0.138, FRP (raw + log) 0.241, `is_night` 0.119.
+Importance within `thermal_only`: `brightness_k` 0.180, `brightness_long_k`
+0.167, `dual_band_delta_k` 0.129, `is_night` 0.124, FRP (raw + log) 0.222.
 
 The dual-band separation ranking third is consistent with the physics it was
 chosen for: small very hot sources versus larger cooler ones. So the classifier
-is not merely a geography lookup — though context features roughly double its
-skill.
+is not purely a geography lookup, though context features roughly double its
+skill on the remaining classes.
 
-## Finding 3 — `industrial_fire` is weakly detectable, and only with context
+## Finding 3 — `natural_fire` performance is substantially leakage
 
-`industrial_fire` F1 is 0.300 under `no_coords` (precision 0.257, recall 0.360)
-and **0.000** under both `full` and `thermal_only`.
+`natural_fire` precision is 0.904 with proximity features and **0.451 without**
+them. That halving is the leakage, measured directly: the label requires a
+location to be more than 5 km from mapped industry, and the model is handed
+`distance_to_facility_m` as an input. It is largely reading the labeller's own
+criterion.
 
-This corrects an earlier run in this repository's history. With 10 tiles cached
-and 3,804 training rows, `industrial_fire` scored **0.000 in every
-configuration**, and the conclusion recorded then was that a single observation
-can never identify an excursion. With 19 tiles and 5,248 rows the model recovers
-9 of 25 held-out cases. **The original claim was too strong** — it was partly a
-data-sparsity artefact, and it is corrected here rather than left standing.
+This was worse earlier — precision was 1.000 at 19 tiles — and improved as
+coverage grew, because better coverage makes the proximity feature less
+perfectly correlated with the label. It has not gone away.
 
-The weaker form of the finding survives and still matters: the class is defined
-by an **excursion ratio over multi-day history** (p90 FRP at least 3x the
-location's median), and a single observation carries no information about the
-median it should be compared against. Recall 0.360 means roughly two in three
-industrial fires are missed from a snapshot. Persistence remains the only
-reliable route to this class.
+`natural_fire` metrics must therefore **not** be quoted as evidence of thermal
+discrimination. The `thermal_only` column is the honest number for that claim.
 
-### Why the class is still suppressed for model output
+## Finding 4 — a single observation barely identifies an excursion
 
-Precision 0.257 means **three of four** model-raised industrial-fire predictions
-would be wrong. For a disaster-management alert that consumes an operator's
-attention, that is not a finding.
+`industrial_fire` F1 is 0.127 under `no_coords` (precision 0.087, recall 0.234),
+0.000 under `full`, and 0.059 under `thermal_only`.
 
-Suppression is implemented as a **measured** rule, not a hardcoded class name:
-`TrainedModel.unreliable_classes()` reads the model's own recorded per-class
-precision and suppresses anything below `MIN_PRECISION_TO_REPORT` (0.5). If
-coverage improves and precision crosses that line, the class becomes reportable
-with no code change. A model carrying no metrics at all is trusted for nothing.
+The class is defined by an **excursion ratio over multi-day history** (p90 FRP at
+least 3× the location's median). A single observation carries no information
+about the median it should be compared against: a snapshot of a site behaving
+normally and a snapshot of the same site during an excursion differ only in
+absolute magnitude, and absolute magnitude does not separate them, because a
+large routine source out-radiates a small anomalous one.
 
-That design exists *because* the earlier justification ("recall is 0.000") went
-stale while the conclusion stayed correct. Reading the measurement keeps the rule
-from outliving its evidence.
+An earlier version of this document claimed a single observation could *never*
+identify an excursion, on the basis of a 0.000 score. That was too strong — the
+model recovers 18 of 77 held-out cases at 53 tiles. The weaker, surviving claim
+is what matters operationally: **roughly three in four are missed, and precision
+0.087 means eleven of twelve positives are false.**
 
-## Finding 4 — `natural_fire` precision of 1.000 is leakage, not skill
+### Consequences enforced in code
 
-Perfect precision is a warning sign, and here the cause is known: the
-`natural_fire` label requires a location to be **more than 5 km from mapped
-industry**, and the model is handed `distance_to_facility_m` directly. It is
-largely reading the same feature the labeller used.
-
-Supporting evidence: under `thermal_only`, with proximity removed, precision
-falls from 1.000 to 0.747. That gap is the leakage.
-
-This is the shared-feature circularity flagged as a risk in
-`docs/adr/0004-labelling-by-information-asymmetry.md`, now measured. It does not
-invalidate the model — the thermal-only run shows real independent signal — but
-`natural_fire` metrics must not be quoted as evidence of thermal discrimination.
+1. **The model may not report this class.** Suppression is measured, not
+   hardcoded: `TrainedModel.unreliable_classes()` reads the model's own recorded
+   per-class precision and suppresses anything below
+   `MIN_PRECISION_TO_REPORT` (0.5). At present that catches both
+   `industrial_fire` (0.087) and `unknown` (0.382), so the model can only ever
+   surface `persistent_industrial` or `natural_fire`. A model carrying no
+   metrics at all is trusted for nothing.
+2. **Persistence is not optional.** The deterministic, history-based rules are
+   the only component that identifies `industrial_fire` with any reliability.
+3. **The model's honest role** is a provisional first pass for a location with
+   no recorded history, separating "probably vegetation" from "probably a
+   persistent industrial source". It is not an anomaly detector.
 
 ## Caveat applying to every number above
 
 Labels are programmatic heuristics derived from persistence, not verified ground
-truth. These metrics measure agreement with a documented rule set under a spatial
-hold-out. They are a consistency check, not validation against reality.
+truth. These metrics measure agreement with a documented rule set under a
+spatial hold-out — a consistency check, not validation against reality.
 
-Coverage is also partial: 19 of 117 tiles. Numbers will move as it grows, as they
-already have once.
+Coverage is 53 of 117 tiles. Numbers will move as it grows, as they already have
+twice. That is why the README's metrics block is generated from
+`backend/models/metrics.json` by `scripts/sync_docs.py` rather than written by
+hand.

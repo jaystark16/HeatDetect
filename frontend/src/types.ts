@@ -171,6 +171,22 @@ export interface ModelInfo {
   caveat: string;
 }
 
+export interface SearchMatch {
+  kind: "coordinates" | "facility" | "detection";
+  label: string;
+  detail: string | null;
+  latitude: number;
+  longitude: number;
+}
+
+export interface SearchResponse {
+  query: string;
+  count: number;
+  matches: SearchMatch[];
+  /** Set when nothing matched; explains what is actually searchable. */
+  note: string | null;
+}
+
 export interface Filters {
   label: ThermalClass | "all";
   minFrpMw: number;

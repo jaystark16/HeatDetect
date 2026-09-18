@@ -22,6 +22,7 @@ import type {
   HotspotCollection,
   HotspotDetail,
   ModelInfo,
+  SearchResponse,
 } from "./types";
 
 const BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
@@ -43,18 +44,27 @@ export class ApiError extends Error {
   }
 }
 
-async function get<T>(path: string, params?: URLSearchParams): Promise<T> {
+async function get<T>(
+  path: string,
+  params?: URLSearchParams,
+  signal?: AbortSignal,
+): Promise<T> {
   const qs = params && [...params].length ? `?${params}` : "";
   let response: Response;
 
   try {
     response = await fetch(`${BASE}${path}${qs}`, {
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      // A caller-supplied signal wins, so a superseded keystroke can be
+      // cancelled; otherwise fall back to the cold-start timeout.
+      signal: signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       headers: { Accept: "application/json" },
     });
   } catch (cause) {
     if (cause instanceof DOMException && cause.name === "TimeoutError") {
       throw new ApiError("The API did not respond in time.");
+    }
+    if (cause instanceof DOMException && cause.name === "AbortError") {
+      throw new ApiError("Request superseded.");
     }
     throw new ApiError("Could not reach the API.");
   }
@@ -121,6 +131,16 @@ export const api = {
 
   datasets: () =>
     withFallback(() => get<DatasetInfo[]>("/api/datasets"), fallbackDatasets),
+
+  /**
+   * Resolve free text to map locations.
+   *
+   * No offline fallback: search queries the facilities table, which the cached
+   * snapshot does not carry. When the API is down the UI disables the box and
+   * says why, rather than silently returning nothing and looking broken.
+   */
+  search: (q: string, signal?: AbortSignal) =>
+    get<SearchResponse>("/api/search", new URLSearchParams({ q }), signal),
 
   /**
    * Detail for one detection.

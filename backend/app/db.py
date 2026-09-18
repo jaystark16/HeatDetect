@@ -227,10 +227,22 @@ def build_engine(url: str | None = None) -> Engine:
         url = settings.database_url or ""
 
     if url:
-        # SQLAlchemy 2.x needs the psycopg driver named explicitly for the
-        # postgres:// form that hosting providers hand out.
+        # Pin the driver explicitly for every Postgres URL form.
+        #
+        # Both rewrites are necessary, and the second is easy to miss: a bare
+        # `postgresql://` URL makes SQLAlchemy default to **psycopg2**, which is
+        # not installed here (this project uses psycopg 3), so the most common
+        # DATABASE_URL form would fail at startup with ModuleNotFoundError.
+        # Hosting providers also hand out the older `postgres://` form, which
+        # SQLAlchemy 2.x rejects outright.
         if url.startswith("postgres://"):
             url = url.replace("postgres://", "postgresql+psycopg://", 1)
+        elif url.startswith("postgresql://"):
+            url = url.replace("postgresql://", "postgresql+psycopg://", 1)
+
+        # pool_pre_ping: managed Postgres (Neon, Render) closes idle
+        # connections, and a stale pooled connection otherwise surfaces as a
+        # random 500 on the first request after a quiet period.
         return create_engine(url, pool_pre_ping=True, future=True)
 
     path = database_path()

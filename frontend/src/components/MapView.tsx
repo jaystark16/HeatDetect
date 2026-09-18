@@ -23,7 +23,14 @@ const INDIA_CENTER: [number, number] = [21.5, 80.0];
 const INITIAL_ZOOM = 5;
 
 /** Keep every detection in view without zooming so far in that context is lost. */
-function FitToData({ hotspots }: { hotspots: HotspotSummary[] }) {
+function FitToData({
+  hotspots,
+  suspended,
+}: {
+  hotspots: HotspotSummary[];
+  /** True once the user has searched: refitting would undo their navigation. */
+  suspended: boolean;
+}) {
   const map = useMap();
 
   // Fit only when the geographic extent actually changes. Refitting on every
@@ -44,8 +51,13 @@ function FitToData({ hotspots }: { hotspots: HotspotSummary[] }) {
   }, [hotspots]);
 
   useEffect(() => {
-    if (!extentKey) return;
+    if (!extentKey || suspended) return;
     const [minLat, maxLat, minLon, maxLon] = extentKey.split(",").map(Number);
+
+    // Leaflet throws "Bounds are not valid" on a non-finite value, which takes
+    // the whole app down. Cheap insurance against one bad row in the feed.
+    if (![minLat, maxLat, minLon, maxLon].every(Number.isFinite)) return;
+
     map.fitBounds(L.latLngBounds([minLat, minLon], [maxLat, maxLon]), {
       padding: [40, 40],
       maxZoom: 8,
@@ -91,13 +103,39 @@ function KeepSized() {
   return null;
 }
 
+/** A place the user asked to be taken to, with a nonce so repeat picks re-fire. */
+export interface FocusTarget {
+  latitude: number;
+  longitude: number;
+  nonce: number;
+}
+
 interface Props {
   hotspots: HotspotSummary[];
   selectedId: string | null;
   onSelect: (hotspot: HotspotSummary) => void;
+  focus: FocusTarget | null;
 }
 
-export default function MapView({ hotspots, selectedId, onSelect }: Props) {
+/**
+ * Fly to a searched location.
+ *
+ * Keyed on the nonce rather than the coordinates so that picking the same
+ * result twice still moves the map — otherwise a user who pans away and
+ * re-selects their search result gets nothing.
+ */
+function FlyToFocus({ focus }: { focus: FocusTarget | null }) {
+  const map = useMap();
+
+  useEffect(() => {
+    if (!focus) return;
+    map.flyTo([focus.latitude, focus.longitude], 11, { duration: 0.8 });
+  }, [focus?.nonce, focus?.latitude, focus?.longitude, map]);
+
+  return null;
+}
+
+export default function MapView({ hotspots, selectedId, onSelect, focus }: Props) {
   // Resolved once. Canvas rendering cannot read CSS classes, so Leaflet needs
   // concrete colour values (see classes.ts).
   const [palette, setPalette] = useState<Palette | null>(null);
@@ -131,7 +169,8 @@ export default function MapView({ hotspots, selectedId, onSelect }: Props) {
       preferCanvas
     >
       <KeepSized />
-      <FitToData hotspots={hotspots} />
+      <FitToData hotspots={hotspots} suspended={focus !== null} />
+      <FlyToFocus focus={focus} />
 
       {/* Both basemaps are key-free. Satellite is the default because seeing the
           ground around a hotspot is what makes an industrial site legible as

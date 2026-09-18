@@ -217,6 +217,30 @@ class Analytics(BaseModel):
     provenance: Provenance
 
 
+class SearchMatch(BaseModel):
+    """One place the user can navigate to.
+
+    `kind` says what was matched so the UI can label it rather than presenting
+    a coordinate parse and a facility-name match as the same kind of answer.
+    """
+
+    kind: Literal["coordinates", "facility", "detection"]
+    label: str
+    detail: str | None = None
+    latitude: float
+    longitude: float
+
+
+class SearchResponse(BaseModel):
+    query: str
+    count: int
+    matches: list[SearchMatch]
+    note: str | None = Field(
+        default=None,
+        description="Set when nothing matched, explaining what is searchable",
+    )
+
+
 class DatasetInfo(BaseModel):
     id: str
     name: str

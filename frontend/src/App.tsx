@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 import DetailPanel from "./components/DetailPanel";
 import FilterPanel from "./components/FilterPanel";
-import MapView from "./components/MapView";
+import MapView, { type FocusTarget } from "./components/MapView";
+import SearchBox from "./components/SearchBox";
 import ProvenanceBar from "./components/ProvenanceBar";
 import StatsBar from "./components/StatsBar";
 import type {
@@ -15,6 +16,7 @@ import type {
   HotspotDetail,
   HotspotSummary,
   ModelInfo,
+  SearchMatch,
 } from "./types";
 
 const DEFAULT_FILTERS: Filters = {
@@ -37,6 +39,7 @@ export default function App() {
   const [detailUnavailable, setDetailUnavailable] = useState(false);
   const [detailFromSnapshot, setDetailFromSnapshot] = useState(false);
 
+  const [focus, setFocus] = useState<FocusTarget | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [fromSnapshot, setFromSnapshot] = useState(false);
@@ -114,6 +117,15 @@ export default function App() {
     }
   }, []);
 
+  // The nonce makes repeat picks of the same result re-trigger the fly-to.
+  const handleSearchPick = useCallback((match: SearchMatch) => {
+    setFocus({
+      latitude: match.latitude,
+      longitude: match.longitude,
+      nonce: Date.now(),
+    });
+  }, []);
+
   const provenance = collection?.provenance ?? analytics?.provenance ?? null;
 
   const mode: DataMode = fromSnapshot
@@ -132,6 +144,9 @@ export default function App() {
           Industrial fire &amp; persistent thermal source classification
         </span>
         <span className="topbar__spacer" />
+        {/* Search needs the facilities table, which the cached snapshot does
+            not carry, so it is disabled with an explanation when offline. */}
+        <SearchBox disabled={fromSnapshot} onPick={handleSearchPick} />
         <ProvenanceBar
           provenance={provenance}
           mode={mode}
@@ -171,6 +186,7 @@ export default function App() {
           hotspots={hotspots}
           selectedId={selected?.id ?? null}
           onSelect={handleSelect}
+          focus={focus}
         />
       </div>
 

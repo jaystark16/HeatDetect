@@ -10,12 +10,17 @@ httpx==0.28.1
 # ingestion plus aggregate reads, which SQL expresses better than objects.
 SQLAlchemy==2.0.44
 
+# Postgres driver. Required whenever DATABASE_URL is set — without it the app
+# claims Postgres support and then fails at connect time, which is worse than
+# not claiming it. SQLite needs nothing extra (stdlib), so this is the only
+# database dependency.
+psycopg[binary]==3.2.10
+
 # --- Features and classification -----------------------------------------
 # numpy/scikit-learn are runtime dependencies because the API loads and calls
-# the trained model. scikit-learn's HistGradientBoosting is used instead of
-# xgboost: comparable accuracy on this feature set, one fewer compiled
-# dependency, and a faster cold build on Render's free tier. See
-# docs/adr/0003-model-choice.md.
+# the trained model. RandomForest is used rather than xgboost: one fewer
+# compiled dependency, a faster cold build, and it exposes feature importances
+# directly, which the feature ablation needed. See docs/adr/0003-model-choice.md.
 numpy==2.3.4
 scikit-learn==1.7.2
 joblib==1.5.2
