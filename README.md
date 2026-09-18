@@ -4,6 +4,10 @@
 
 Smart India Hackathon 2026 · Problem **SIH26162** · National Technical Research Organisation (NTRO) · Theme: Disaster Management
 
+**Live dashboard: https://jaystark16.github.io/HeatDetect/**
+
+The deployed site currently runs on its bundled sample snapshot and labels itself accordingly — the API is not hosted yet.
+
 ---
 
 ## The problem

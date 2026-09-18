@@ -27,6 +27,7 @@ services:
       - key: DATABASE_URL
         sync: false
 
-      # Replace with the deployed dashboard origin once the frontend has a URL.
+      # The deployed dashboard plus the local dev server. Add a Cloudflare Pages
+      # origin here too if the frontend moves there.
       - key: CORS_ORIGINS
-        value: http://localhost:5173
+        value: https://jaystark16.github.io,http://localhost:5173
