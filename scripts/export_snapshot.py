@@ -43,16 +43,37 @@ from app.service import (  # noqa: E402
 # served gzipped by the CDN and fetched only when the API cannot be reached.
 OUT = ROOT / "frontend" / "public" / "snapshot.json"
 
-# Summaries are tiny (~150 bytes each) so the map stays complete. Full detail
-# with evidence is ~1.5 KB each, so it is limited to the most significant
-# locations — ordering already puts recurring, high-FRP cells first.
+# Summaries are tiny (~150 bytes each). Full detail with evidence is ~1.5 KB
+# each, so it is limited to the most significant locations.
 MAX_SUMMARIES = 4000
 MAX_DETAILS = 300
+
+# Summaries are drawn PER CLASS, not from one ranked list.
+#
+# The API orders by persistence descending, which is right for an operator but
+# wrong for an export: vegetation fires are short-lived by definition, so a
+# straight top-4000 contained 2,712 persistent-industrial rows, 445 industrial
+# fires, 843 unclassified and **zero** vegetation fires — the offline map
+# implied every thermal anomaly in India was industrial. Quotas keep the
+# snapshot representative of what the database actually holds.
+CLASS_QUOTAS = {
+    # Rare and operationally important: take everything.
+    "industrial_fire": 600,
+    "persistent_industrial": 1400,
+    "natural_fire": 1400,
+    "unknown": 600,
+}
 
 
 def main() -> int:
     engine = build_engine()
     trained = ml.load()
+
+    # One query per class, so each is represented up to its quota.
+    per_class = {
+        label: list_hotspots(engine, HotspotFilters(label=label, limit=quota))
+        for label, quota in CLASS_QUOTAS.items()
+    }
 
     collection = list_hotspots(engine, HotspotFilters(limit=MAX_SUMMARIES))
     if collection.count == 0:
@@ -66,8 +87,15 @@ def main() -> int:
     analytics = get_analytics(engine)
     now = datetime.now(timezone.utc)
 
+    selected: list = []
+    for label in CLASS_QUOTAS:
+        selected.extend(per_class[label].hotspots)
+
+    # Deterministic order so repeated exports of the same database are identical.
+    selected.sort(key=lambda h: (-h.distinct_days, -h.frp_mw, h.id))
+
     summaries = []
-    for h in collection.hotspots:
+    for h in selected:
         payload = json.loads(h.model_dump_json())
         payload["hours_ago"] = round(
             (now - h.acquired_at).total_seconds() / 3600, 2
@@ -75,8 +103,15 @@ def main() -> int:
         del payload["acquired_at"]
         summaries.append(payload)
 
+    # Detail is spread across classes too, so an offline user can inspect a
+    # vegetation fire and an industrial source, not only the persistent ones.
+    detail_targets: list = []
+    per_class_detail = max(1, MAX_DETAILS // len(CLASS_QUOTAS))
+    for label in CLASS_QUOTAS:
+        detail_targets.extend(per_class[label].hotspots[:per_class_detail])
+
     details = {}
-    for h in collection.hotspots[:MAX_DETAILS]:
+    for h in detail_targets:
         detail = get_hotspot_detail(engine, h.id, trained)
         if detail is None:
             continue
@@ -107,6 +142,7 @@ def main() -> int:
             "captured at the time above. This is a cached snapshot, not live data."
         ),
         "total_matching": collection.total_matching,
+        "summary_selection": "per-class quotas; see CLASS_QUOTAS in scripts/export_snapshot.py",
         "coverage_note": collection.provenance.coverage_note,
         "surveyed_cells": collection.provenance.surveyed_cells,
         "unsurveyed_cells": collection.provenance.unsurveyed_cells,
