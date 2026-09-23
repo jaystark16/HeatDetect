@@ -197,7 +197,7 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
           const style = CLASS_STYLES[hotspot.label];
           const colours = palette[hotspot.label];
           const selected = hotspot.id === selectedId;
-          const radius = radiusFromFrp(hotspot.frp_mw);
+          const radius = radiusFromFrp(hotspot.frp_mw, hotspot.label);
 
           return (
             <CircleMarker
@@ -206,9 +206,14 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
               radius={selected ? radius + 4 : radius}
               pathOptions={{
                 color: selected ? "#ffffff" : colours.stroke,
-                weight: selected ? 3 : strokeWeightFromDays(hotspot.distinct_days),
+                weight: selected
+                  ? 3
+                  : hotspot.label === "unknown"
+                    ? 1
+                    : strokeWeightFromDays(hotspot.distinct_days),
                 fillColor: colours.fill,
-                fillOpacity: style.fill === "hollow" ? 0.25 : 0.85,
+                fillOpacity: style.fill === "hollow" ? 0.12 : 0.85,
+                opacity: hotspot.label === "unknown" ? 0.55 : 1,
               }}
               eventHandlers={{ click: () => onSelect(hotspot) }}
             >

@@ -40,8 +40,39 @@ ThermalClass = Literal[
 # always be explained in terms of the criterion that produced it.
 
 PERSISTENT_MIN_DISTINCT_DAYS = 4
-"""Measured: 220 of 2,695 active cells reach 4+ distinct days over 7 days. This
-separates genuinely recurring sources from multi-satellite echoes of one event."""
+"""Absolute floor. Nothing is called persistent on fewer than four distinct days,
+however short the ingested window is."""
+
+PERSISTENT_MIN_DAY_FRACTION = 0.25
+"""...and it must also recur on at least a quarter of the days actually
+available to observe it.
+
+The absolute floor alone is not enough, because it silently changes meaning with
+the amount of history ingested. Four days is 57% of a 7-day archive window but
+only 6.5% of a 61-day backfilled one — the same number would go from "strong
+evidence of recurrence" to "seen a handful of times in two months" without any
+code change. Measured on the 61-day window: 6.0% of cells reach 4+ days but only
+1.5% reach 15+, so the fraction is what actually discriminates once real history
+is available.
+
+The denominator is the **global ingestion window**, not the cell's own first-to-
+last span. Using the cell's span would make two detections a day apart look like
+100% recurrence."""
+
+
+def persistent_day_threshold(global_window_days: int) -> int:
+    """Distinct days required to call a location persistent.
+
+    Scales with how much history exists, so the label means the same thing
+    whether the database holds 7 days from the open archives or 60 from a
+    keyed backfill.
+    """
+    import math
+
+    return max(
+        PERSISTENT_MIN_DISTINCT_DAYS,
+        math.ceil(PERSISTENT_MIN_DAY_FRACTION * max(1, global_window_days)),
+    )
 
 INDUSTRIAL_PROXIMITY_M = 3_000.0
 """Within 3 km of a mapped industrial feature. Measured nearest distances for
@@ -76,7 +107,11 @@ def _criterion(name: str, passed: bool, **values: object) -> dict[str, object]:
     return {"criterion": name, "passed": passed, **values}
 
 
-def assign_label(stats: CellStats, context: CellContextRow) -> LabelDecision:
+def assign_label(
+    stats: CellStats,
+    context: CellContextRow,
+    global_window_days: int = 7,
+) -> LabelDecision:
     """Classify one cell from its full history.
 
     Order matters. The checks run from most-constrained to least, and the first
@@ -118,13 +153,15 @@ def assign_label(stats: CellStats, context: CellContextRow) -> LabelDecision:
         )
     )
 
-    persistent = stats.distinct_days >= PERSISTENT_MIN_DISTINCT_DAYS
+    threshold_days = persistent_day_threshold(global_window_days)
+    persistent = stats.distinct_days >= threshold_days
     rationale.append(
         _criterion(
             "recurrence",
             persistent,
             distinct_days=stats.distinct_days,
-            threshold_days=PERSISTENT_MIN_DISTINCT_DAYS,
+            threshold_days=threshold_days,
+            global_window_days=global_window_days,
             observations=stats.observation_count,
         )
     )
@@ -201,7 +238,9 @@ def assign_label(stats: CellStats, context: CellContextRow) -> LabelDecision:
 
 
 def assign_labels(
-    stats: Sequence[CellStats], contexts: Sequence[CellContextRow]
+    stats: Sequence[CellStats],
+    contexts: Sequence[CellContextRow],
+    global_window_days: int = 7,
 ) -> list[LabelDecision]:
     by_cell = {c.cell_id: c for c in contexts}
     decisions: list[LabelDecision] = []
@@ -214,7 +253,7 @@ def assign_labels(
                 f"No context computed for cell {row.cell_id!r}. Run the context "
                 f"stage before labelling."
             )
-        decisions.append(assign_label(row, context))
+        decisions.append(assign_label(row, context, global_window_days))
     return decisions
 
 

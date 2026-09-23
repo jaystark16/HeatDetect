@@ -135,6 +135,8 @@ export default function App() {
       : "historical";
 
   const hotspots = collection?.hotspots ?? [];
+  const truncated =
+    collection !== null && collection.total_matching > hotspots.length;
 
   return (
     <div className="app">
@@ -177,8 +179,19 @@ export default function App() {
 
         {!loading && collection && hotspots.length === 0 && !error && (
           <div className="map__notice">
-            No detections match these filters. The ingested window is 7 days, so
-            narrow time ranges can legitimately be empty.
+            No detections match these filters. Narrow time ranges can
+            legitimately be empty.
+          </div>
+        )}
+
+        {/* The map draws a class-balanced sample, not everything. Saying so is
+            the difference between a readable map and a misleading one. */}
+        {!loading && collection && truncated && !error && (
+          <div className="map__notice">
+            Showing {hotspots.length.toLocaleString()} of{" "}
+            {collection.total_matching.toLocaleString()} matching detections — a
+            balanced sample across all four classes, most persistent first.
+            Counts in the panels below are for the full set.
           </div>
         )}
 

@@ -18,7 +18,7 @@ import logging
 import sys
 import time
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from sqlalchemy import func, insert, select, update
@@ -201,6 +201,136 @@ def _store_detections(
         with engine.begin() as conn:
             conn.execute(detections.insert(), fresh)
     return len(fresh)
+
+
+def cmd_backfill(engine: Engine, days_back: int, max_requests: int | None) -> int:
+    """Extend detection history backwards using the keyed FIRMS endpoint.
+
+    This is the only feature that needs a MAP_KEY, and it earns one. The open
+    archives carry a rolling 7-day window, so every baseline computed from them
+    is a 7-day baseline — and the README has to say so. The keyed endpoint
+    accepts a start date and serves data months back, which turns that into a
+    genuinely long-term normal. Persistence is the discriminator the whole
+    system rests on, so lengthening it is the single highest-value thing a key
+    can buy here.
+
+    Paged in 5-day chunks because the endpoint rejects anything longer.
+    Idempotent: re-running overlaps costs nothing, since detections are keyed by
+    a content hash.
+    """
+    if not settings.firms_map_key:
+        logger.error(
+            "Backfill needs a FIRMS MAP_KEY in backend/.env. Request one free at "
+            "https://firms.modaps.eosdis.nasa.gov/api/map_key/ — note that normal "
+            "ingestion does NOT need it."
+        )
+        return 1
+
+    bbox = settings.bbox
+    chunk = firms.API_MAX_DAYS
+    # Oldest first, so an interrupted run still leaves a contiguous recent span.
+    starts = [
+        (datetime.now(timezone.utc).date() - timedelta(days=offset)).isoformat()
+        for offset in range(days_back, 0, -chunk)
+    ]
+
+    planned = len(starts) * len(firms.PRODUCTS)
+    logger.info(
+        "backfill: %d days in %d chunks x %d products = %d requests",
+        days_back,
+        len(starts),
+        len(firms.PRODUCTS),
+        planned,
+    )
+
+    client = httpx.Client(
+        headers={"User-Agent": firms.USER_AGENT},
+        timeout=httpx.Timeout(180.0),
+        follow_redirects=True,
+    )
+    total_inserted = 0
+    total_seen = 0
+    failures = 0
+    requests_made = 0
+
+    try:
+        for start in starts:
+            for product in firms.PRODUCTS:
+                if max_requests is not None and requests_made >= max_requests:
+                    logger.info("backfill: request cap reached, stopping early")
+                    raise StopIteration
+
+                run_id = _start_run(
+                    engine, "firms_backfill", f"{product.id}/{start}+{chunk}d", None
+                )
+                requests_made += 1
+                try:
+                    result = firms.fetch_area(
+                        product,
+                        map_key=settings.firms_map_key,
+                        days=chunk,
+                        start_date=start,
+                        bbox=bbox,
+                        client=client,
+                    )
+                    parsed, report = firms.parse(result)
+                except firms.FirmsUnavailable as exc:
+                    failures += 1
+                    logger.warning("backfill %s %s failed: %s", product.id, start, exc)
+                    _finish_run(engine, run_id, status="failed", error=str(exc)[:1000])
+                    continue
+
+                in_area = [
+                    d for d in parsed if bbox_contains(bbox, d.latitude, d.longitude)
+                ]
+                inserted = _store_detections(engine, in_area, run_id)
+                total_inserted += inserted
+                total_seen += report.accepted
+
+                logger.info(
+                    "backfill %-7s %s  %s | new %d",
+                    product.id,
+                    start,
+                    report.summary(),
+                    inserted,
+                )
+                _finish_run(
+                    engine,
+                    run_id,
+                    status="success",
+                    rows_seen=report.rows_seen,
+                    rows_accepted=report.accepted,
+                    rows_rejected=report.rejected,
+                    rows_inserted=inserted,
+                    reject_reasons=dict(report.reject_reasons) or None,
+                )
+    except StopIteration:
+        pass
+    finally:
+        client.close()
+
+    with engine.connect() as conn:
+        stored, oldest, newest = conn.execute(
+            select(
+                func.count(),
+                func.min(detections.c.acquired_at),
+                func.max(detections.c.acquired_at),
+            ).select_from(detections)
+        ).one()
+
+    logger.info(
+        "backfill complete: %d requests, %d rows returned, %d newly stored, "
+        "%d failures. Database now holds %d detections spanning %s -> %s",
+        requests_made,
+        total_seen,
+        total_inserted,
+        failures,
+        stored,
+        oldest,
+        newest,
+    )
+    logger.info("Run `features` next so the longer history reaches the baselines.")
+    return 1 if failures and not total_inserted else 0
 
 
 # -------------------------------------------------------------- OSM tiles --
@@ -457,7 +587,25 @@ def cmd_features(engine: Engine) -> int:
         stored_stats = feat.store_cell_stats(engine, stats)
         contexts = feat.compute_cell_context(engine, [s.cell_id for s in stats])
         stored_ctx = feat.store_cell_context(engine, contexts)
-        decisions = lbl.assign_labels(stats, contexts)
+        # The persistence threshold scales with how much history exists, so
+        # the label means the same thing at 7 days as at 60.
+        with engine.connect() as conn:
+            oldest, newest = conn.execute(
+                select(
+                    func.min(detections.c.acquired_at),
+                    func.max(detections.c.acquired_at),
+                )
+            ).one()
+        global_window_days = (
+            (newest.date() - oldest.date()).days + 1 if oldest and newest else 7
+        )
+        logger.info(
+            "features: global window is %d days; persistence threshold is %d distinct days",
+            global_window_days,
+            lbl.persistent_day_threshold(global_window_days),
+        )
+
+        decisions = lbl.assign_labels(stats, contexts, global_window_days)
         stored_labels = lbl.store_labels(engine, decisions)
     except Exception as exc:  # noqa: BLE001
         _finish_run(engine, run_id, status="failed", error=str(exc)[:1000])
@@ -557,6 +705,23 @@ def main(argv: list[str] | None = None) -> int:
     p_ingest = sub.add_parser("ingest", help="Fetch FIRMS detections")
     p_ingest.add_argument("--window", choices=["24h", "7d"], default="7d")
 
+    p_back = sub.add_parser(
+        "backfill",
+        help="Extend history backwards via the keyed FIRMS endpoint (needs MAP_KEY)",
+    )
+    p_back.add_argument(
+        "--days-back",
+        type=int,
+        default=60,
+        help="How many days of history to pull (default 60)",
+    )
+    p_back.add_argument(
+        "--max-requests",
+        type=int,
+        default=None,
+        help="Stop after this many requests; useful for a quick trial",
+    )
+
     p_fac = sub.add_parser("facilities", help="Prefetch OSM context for active tiles")
     p_fac.add_argument("--max-tiles", type=int, default=None)
     p_fac.add_argument(
@@ -575,6 +740,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "ingest":
         return cmd_ingest(engine, args.window)
+    if args.command == "backfill":
+        return cmd_backfill(engine, args.days_back, args.max_requests)
     if args.command == "facilities":
         return cmd_facilities(engine, args.max_tiles, args.cache_only)
     if args.command == "features":

@@ -7,18 +7,23 @@
    dE 9.2, normal-vision dE 24.0. Light-mode aqua sits at 2.74:1 contrast,
    below 3:1, so the relief rule applies: the legend and detail panel always
    name the class in text.
+
+   The palette is NOT a styling choice and must not be adjusted for looks.
+   Everything else here is.
    =========================================================================== */
 
 :root {
   --surface-0: #0d0d0d; /* page / map plane */
-  --surface-1: #1a1a19; /* panels */
-  --surface-2: #232321; /* raised rows, inputs */
+  --surface-1: #161615; /* panels */
+  --surface-2: #1e1e1c; /* cards, inputs */
+  --surface-3: #272725; /* hover, raised rows */
 
   --ink-primary: #ffffff;
   --ink-secondary: #c3c2b7;
-  --ink-muted: #898781;
+  --ink-muted: #8d8b85;
 
-  --hairline: rgba(255, 255, 255, 0.1);
+  --hairline: rgba(255, 255, 255, 0.09);
+  --hairline-strong: rgba(255, 255, 255, 0.16);
 
   /* Categorical: thermal anomaly classes. `unknown` has no hue by design. */
   --class-industrial-fire: #d95926;
@@ -30,20 +35,38 @@
   --status-warning: #fab219;
   --status-good: #0ca30c;
 
-  --radius: 6px;
+  /* Spacing scale. Every gap and pad picks from this, so the interface has a
+     rhythm instead of a different hand-tuned number in each rule. */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+
+  --radius-sm: 5px;
+  --radius: 8px;
+  --radius-lg: 12px;
+
   --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+
+  /* One focus treatment, used everywhere. Keyboard focus was previously
+     invisible on every select, button and slider in the app. */
+  --focus-ring: 0 0 0 2px var(--surface-1), 0 0 0 4px var(--class-persistent);
 }
 
 :root[data-theme="light"] {
-  --surface-0: #f9f9f7;
+  --surface-0: #f4f4f1;
   --surface-1: #fcfcfb;
-  --surface-2: #f0efec;
+  --surface-2: #f4f3f0;
+  --surface-3: #eceae5;
 
   --ink-primary: #0b0b0b;
-  --ink-secondary: #52514e;
+  --ink-secondary: #4b4a47;
   --ink-muted: #6f6e69;
 
   --hairline: rgba(11, 11, 11, 0.1);
+  --hairline-strong: rgba(11, 11, 11, 0.18);
 
   --class-industrial-fire: #eb6834;
   --class-persistent: #2a78d6;
@@ -67,13 +90,29 @@ body {
   color: var(--ink-primary);
   font-size: 14px;
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* A single visible focus treatment for every interactive element. */
+:where(button, select, input, a, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+/* Panels scroll; the default Windows scrollbar is heavy against a dark surface. */
+.panel,
+.drawer,
+.search__results {
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline-strong) transparent;
 }
 
 /* ---------------------------------------------------------------- layout -- */
 
 .app {
   display: grid;
-  grid-template-columns: 272px minmax(0, 1fr) 380px;
+  grid-template-columns: 286px minmax(0, 1fr) 396px;
   grid-template-rows: auto minmax(0, 1fr) auto;
   grid-template-areas:
     "topbar topbar topbar"
@@ -87,16 +126,16 @@ body {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
   background: var(--surface-1);
   border-bottom: 1px solid var(--hairline);
 }
 
 .topbar__brand {
-  font-weight: 650;
-  letter-spacing: -0.01em;
-  font-size: 15px;
+  font-weight: 680;
+  letter-spacing: -0.02em;
+  font-size: 16px;
 }
 
 .topbar__sub {
@@ -115,18 +154,21 @@ body {
   background: var(--surface-2);
   border: 1px solid var(--hairline);
   border-radius: var(--radius);
-  padding: 4px 10px;
+  padding: var(--s1) var(--s3);
   cursor: pointer;
+  white-space: nowrap;
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .topbar__button:hover {
   color: var(--ink-primary);
+  background: var(--surface-3);
 }
 
 .panel {
   background: var(--surface-1);
   overflow-y: auto;
-  padding: 14px;
+  padding: var(--s4);
   min-height: 0;
 }
 
@@ -148,12 +190,12 @@ body {
 
 .map__notice {
   position: absolute;
-  top: 10px;
+  top: var(--s3);
   /* Inset to clear Leaflet's own controls: zoom top-left, layers top-right. */
   left: 56px;
   right: 56px;
   z-index: 500; /* over Leaflet panes, under its controls at 1000 */
-  padding: 8px 12px;
+  padding: var(--s2) var(--s3);
   border-radius: var(--radius);
   font-size: 12.5px;
   color: var(--status-warning);
@@ -167,6 +209,8 @@ body {
   border-color: color-mix(in oklab, var(--status-critical) 45%, transparent);
 }
 
+/* ------------------------------------------------------------- stat row -- */
+
 .stats {
   grid-area: stats;
   display: flex;
@@ -175,46 +219,47 @@ body {
   border-top: 1px solid var(--hairline);
 }
 
-/* ------------------------------------------------------------- stat row -- */
-
 .stat {
   flex: 1;
   background: var(--surface-1);
-  padding: 9px 14px;
+  padding: var(--s3) var(--s4);
   min-width: 0;
 }
 
 .stat__value {
-  font-size: 21px;
-  font-weight: 600;
-  letter-spacing: -0.02em;
-  line-height: 1.15;
+  font-size: 24px;
+  font-weight: 620;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  /* Tabular figures so the row does not jitter as counts change under filters. */
+  font-variant-numeric: tabular-nums;
 }
 
 .stat__label {
   font-size: 10.5px;
   color: var(--ink-muted);
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  margin-top: 2px;
+  letter-spacing: 0.05em;
+  margin-top: var(--s1);
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--s2);
+  line-height: 1.3;
 }
 
 /* ------------------------------------------------------------- controls -- */
 
 .field {
-  margin-bottom: 14px;
+  margin-bottom: var(--s3);
 }
 
 .field__label {
   display: block;
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   color: var(--ink-muted);
-  margin-bottom: 6px;
+  margin-bottom: var(--s2);
 }
 
 .field select,
@@ -227,44 +272,63 @@ body {
   color: var(--ink-primary);
   border: 1px solid var(--hairline);
   border-radius: var(--radius);
-  padding: 6px 8px;
+  padding: var(--s2) var(--s3);
   font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: border-color 120ms ease;
+}
+
+.field select:hover {
+  border-color: var(--hairline-strong);
+}
+
+.field input[type="range"] {
+  accent-color: var(--class-persistent);
+  cursor: pointer;
 }
 
 .section-title {
   font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
   color: var(--ink-muted);
-  margin: 0 0 8px;
-  padding-top: 14px;
+  margin: 0 0 var(--s2);
+  padding-top: var(--s4);
   border-top: 1px solid var(--hairline);
+}
+
+/* First section in a panel needs no divider above it. */
+.panel > .section-title:first-child {
+  padding-top: 0;
+  border-top: none;
 }
 
 .legend {
   display: grid;
-  gap: 2px;
+  gap: 1px;
 }
 
 .legend__row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
+  gap: var(--s2);
+  font-size: 12.5px;
   color: var(--ink-secondary);
 }
 
 .legend__row--button {
   font: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
   text-align: left;
   width: 100%;
   background: transparent;
   border: 1px solid transparent;
   border-radius: var(--radius);
-  padding: 5px 7px;
+  padding: var(--s2) var(--s2);
   cursor: pointer;
   color: var(--ink-secondary);
+  transition: background 120ms ease;
 }
 
 .legend__row--button:hover {
@@ -272,24 +336,25 @@ body {
 }
 
 .legend__row--button.is-active {
-  background: var(--surface-2);
-  border-color: var(--hairline);
+  background: var(--surface-3);
+  border-color: var(--hairline-strong);
   color: var(--ink-primary);
 }
 
 .legend__label {
   flex: 1;
+  min-width: 0;
 }
 
 .legend__count {
   font-variant-numeric: tabular-nums;
   color: var(--ink-muted);
-  font-size: 11px;
+  font-size: 11.5px;
 }
 
 .legend__swatch {
-  width: 12px;
-  height: 12px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
   flex: none;
 }
@@ -313,16 +378,19 @@ body {
 
 .hint-list {
   margin: 0;
-  padding-left: 16px;
+  padding-left: var(--s4);
   font-size: 12px;
   color: var(--ink-muted);
 }
 
 .hint-list li {
-  margin-bottom: 4px;
+  margin-bottom: var(--s1);
 }
 
-/* --------------------------------------------------------- detail panel -- */
+/* --------------------------------------------------------- detail panel --
+   Grouped into cards. The panel carries four distinct kinds of information —
+   verdict, measurement, our computation, geography — and a flat scroll of
+   definition lists made them read as one undifferentiated dump.            */
 
 .detail__empty,
 .detail__absent {
@@ -330,53 +398,69 @@ body {
   font-size: 12.5px;
 }
 
+.detail__empty {
+  line-height: 1.6;
+}
+
 .detail__absent {
   background: var(--surface-2);
   border-left: 2px solid var(--ink-muted);
-  padding: 8px 10px;
+  padding: var(--s3);
   border-radius: 0 var(--radius) var(--radius) 0;
 }
 
 .detail__label {
-  font-size: 17px;
-  font-weight: 600;
-  margin: 0 0 8px;
-  letter-spacing: -0.01em;
-  line-height: 1.25;
+  font-size: 19px;
+  font-weight: 640;
+  margin: 0 0 var(--s2);
+  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
 .detail__origin {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  margin-bottom: 10px;
+  gap: var(--s2);
+  margin-bottom: var(--s3);
 }
 
 .detail__origin-note {
   font-size: 12px;
   color: var(--ink-secondary);
+  line-height: 1.5;
 }
 
 .detail__caution {
   font-size: 12px;
   color: var(--ink-muted);
-  border-top: 1px solid var(--hairline);
-  padding-top: 10px;
-  margin: 0 0 4px;
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  padding: var(--s2) var(--s3);
+  margin: 0 0 var(--s2);
+  line-height: 1.5;
 }
 
 .detail__snapshot {
   font-size: 12px;
   color: var(--status-warning);
-  margin: 6px 0 0;
+  margin: var(--s2) 0 0;
+}
+
+/* A section card: heading sits outside, values inside. */
+.detail__card {
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: var(--s3);
+  margin-bottom: var(--s2);
 }
 
 .kv {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 4px 12px;
-  font-size: 12px;
-  margin: 0 0 4px;
+  gap: var(--s2) var(--s3);
+  font-size: 12.5px;
+  margin: 0;
 }
 
 .kv dt {
@@ -387,6 +471,8 @@ body {
   margin: 0;
   text-align: right;
   font-variant-numeric: tabular-nums;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .kv__absent {
@@ -402,32 +488,39 @@ body {
   list-style: none;
   margin: 0;
   padding: 0;
+  display: grid;
+  gap: var(--s1);
 }
 
 .evidence__item {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 8px;
+  gap: var(--s2);
   align-items: start;
   font-size: 12.5px;
+  line-height: 1.5;
   color: var(--ink-secondary);
-  padding: 7px 0;
-  border-bottom: 1px solid var(--hairline);
+  padding: var(--s2) var(--s3);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
 }
 
-.evidence__item:last-child {
-  border-bottom: none;
+/* An absence is a caution, so it is bordered rather than filled like a finding. */
+.evidence__item--absent {
+  background: transparent;
+  border-color: color-mix(in oklab, var(--status-warning) 28%, transparent);
 }
 
 .evidence__kind {
   font-size: 9.5px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.06em;
   padding: 2px 5px;
   border-radius: 3px;
   white-space: nowrap;
-  margin-top: 1px;
-  font-weight: 600;
+  margin-top: 2px;
+  font-weight: 650;
 }
 
 .evidence__kind--observed {
@@ -437,10 +530,9 @@ body {
 
 .evidence__kind--derived {
   color: var(--ink-secondary);
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 
-/* Absences are warning-toned: a gap in evidence is a caution, not a finding. */
 .evidence__kind--absent {
   color: var(--status-warning);
   background: color-mix(in oklab, var(--status-warning) 16%, transparent);
@@ -455,15 +547,16 @@ body {
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--s1);
   font-size: 11px;
-  padding: 2px 8px;
+  padding: 3px var(--s2);
   border-radius: 999px;
   border: 1px solid var(--hairline);
   color: var(--ink-secondary);
   background: var(--surface-2);
   white-space: nowrap;
   align-self: flex-start;
+  font-weight: 550;
 }
 
 .chip--sample {
@@ -509,18 +602,23 @@ body {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--s2);
 }
 
 .search__input {
   font: inherit;
   font-size: 12.5px;
-  width: 238px;
-  padding: 5px 9px;
+  width: 248px;
+  padding: var(--s2) var(--s3);
   color: var(--ink-primary);
   background: var(--surface-2);
   border: 1px solid var(--hairline);
   border-radius: var(--radius);
+  transition: border-color 120ms ease;
+}
+
+.search__input:hover:not(:disabled) {
+  border-color: var(--hairline-strong);
 }
 
 .search__input::placeholder {
@@ -534,24 +632,24 @@ body {
 
 .search__busy {
   position: absolute;
-  right: 8px;
+  right: var(--s3);
   color: var(--ink-muted);
   pointer-events: none;
 }
 
 .search__results {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + var(--s2));
   right: 0;
   width: min(420px, 90vw);
   max-height: 320px;
   overflow-y: auto;
   z-index: 1300; /* above the provenance drawer */
   background: var(--surface-1);
-  border: 1px solid var(--hairline);
+  border: 1px solid var(--hairline-strong);
   border-radius: var(--radius);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
-  padding: 4px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+  padding: var(--s1);
 }
 
 .search__result {
@@ -560,22 +658,22 @@ body {
   grid-template-areas:
     "kind label coords"
     "kind detail detail";
-  gap: 2px 8px;
+  gap: 2px var(--s2);
   width: 100%;
   text-align: left;
   font: inherit;
   font-size: 12.5px;
   background: transparent;
   border: none;
-  border-radius: var(--radius);
-  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  padding: var(--s2);
   cursor: pointer;
   color: var(--ink-primary);
 }
 
 .search__result:hover,
 .search__result:focus-visible {
-  background: var(--surface-2);
+  background: var(--surface-3);
 }
 
 .search__kind {
@@ -583,13 +681,13 @@ body {
   align-self: start;
   font-size: 9.5px;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: 600;
+  letter-spacing: 0.06em;
+  font-weight: 650;
   color: var(--class-persistent);
   background: color-mix(in oklab, var(--class-persistent) 16%, transparent);
   padding: 2px 5px;
   border-radius: 3px;
-  margin-top: 1px;
+  margin-top: 2px;
 }
 
 .search__label {
@@ -611,39 +709,47 @@ body {
 
 .search__note {
   margin: 0;
-  padding: 9px 10px;
+  padding: var(--s3);
   font-size: 12px;
   color: var(--ink-muted);
+  line-height: 1.5;
 }
 
 /* --------------------------------------------------------------- drawer -- */
+
+.provenance {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
 
 .drawer {
   position: absolute;
   top: 100%;
   right: 0;
-  width: min(560px, 100vw);
-  max-height: 72vh;
+  width: min(580px, 100vw);
+  max-height: 74vh;
   overflow-y: auto;
   z-index: 1200; /* above Leaflet controls */
   background: var(--surface-1);
-  border: 1px solid var(--hairline);
-  border-radius: 0 0 var(--radius) var(--radius);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
 }
 
 .drawer__inner {
-  padding: 4px 16px 18px;
+  padding: var(--s1) var(--s4) var(--s5);
 }
 
 .drawer__section .section-title {
-  padding-top: 16px;
+  padding-top: var(--s5);
 }
 
 .drawer__text {
   font-size: 12.5px;
   color: var(--ink-secondary);
-  margin: 0 0 8px;
+  margin: 0 0 var(--s2);
+  line-height: 1.55;
 }
 
 .drawer__text--muted {
@@ -653,11 +759,11 @@ body {
 .drawer__text--caveat {
   color: var(--ink-muted);
   border-left: 2px solid var(--status-warning);
-  padding-left: 9px;
+  padding-left: var(--s3);
 }
 
 .dataset {
-  padding: 9px 0;
+  padding: var(--s3) 0;
   border-bottom: 1px solid var(--hairline);
 }
 
@@ -668,7 +774,7 @@ body {
 .dataset__head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--s2);
   justify-content: space-between;
   font-size: 13px;
 }
@@ -676,7 +782,7 @@ body {
 .dataset__head a {
   color: var(--ink-primary);
   text-decoration: none;
-  border-bottom: 1px solid var(--hairline);
+  border-bottom: 1px solid var(--hairline-strong);
 }
 
 .dataset__head a:hover {
@@ -687,10 +793,11 @@ body {
   font-size: 11.5px;
   color: var(--ink-muted);
   margin-top: 2px;
+  line-height: 1.5;
 }
 
 .dataset__limits {
-  margin-top: 6px;
+  margin-top: var(--s2);
   font-size: 12px;
   color: var(--ink-secondary);
 }
@@ -702,12 +809,13 @@ body {
 }
 
 .dataset__limits ul {
-  margin: 6px 0 0;
-  padding-left: 16px;
+  margin: var(--s2) 0 0;
+  padding-left: var(--s4);
 }
 
 .dataset__limits li {
-  margin-bottom: 4px;
+  margin-bottom: var(--s1);
+  line-height: 1.5;
 }
 
 .metrics {
@@ -715,13 +823,13 @@ body {
   border-collapse: collapse;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  margin-bottom: 8px;
+  margin-bottom: var(--s2);
 }
 
 .metrics th,
 .metrics td {
   text-align: right;
-  padding: 3px 6px;
+  padding: var(--s1) var(--s2);
   border-bottom: 1px solid var(--hairline);
 }
 
@@ -735,19 +843,12 @@ body {
   font-weight: 500;
   font-size: 10.5px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.05em;
 }
 
 /* A class the model is not trusted to report is marked, not smoothed over. */
 .metrics__row--suppressed td {
   color: var(--status-critical);
-}
-
-/* Provenance group: positioning context for the drawer, which anchors to it. */
-.provenance {
-  display: flex;
-  align-items: center;
-  gap: 10px;
 }
 
 /* Leaflet's own surface must match ours, or the map flashes white on load. */
@@ -767,7 +868,7 @@ body {
 @media (max-width: 1100px) {
   .app {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto auto minmax(320px, 1fr) auto auto;
+    grid-template-rows: auto auto minmax(340px, 1fr) auto auto;
     grid-template-areas:
       "topbar"
       "filters"
@@ -783,6 +884,21 @@ body {
     border: none;
     border-top: 1px solid var(--hairline);
     max-height: none;
+  }
+
+  /* Two columns, so the selects are not stretched across the whole viewport —
+     a full-width dropdown on a wide screen reads as an unfinished layout. */
+  .panel--filters {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0 var(--s4);
+    align-items: start;
+  }
+
+  .panel--filters > .section-title,
+  .panel--filters > .legend,
+  .panel--filters > .hint-list {
+    grid-column: 1 / -1;
   }
 
   .stats {
@@ -802,10 +918,17 @@ body {
   }
 
   .search__input {
-    width: 160px;
+    width: 180px;
   }
 
   .drawer {
     width: 100vw;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
   }
 }

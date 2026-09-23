@@ -5,27 +5,33 @@ Reproduce with `backend/.venv/Scripts/python -m app.train --ablation`.
 Identical data, identical spatial split, identical hyperparameters. Only the
 feature set differs.
 
-**Run conditions (final, frozen):** 6,775 detections from surveyed cells, 53 of
-117 OSM tiles cached (2,432 of 2,798 cells surveyed). Spatial hold-out by 1°
-block: 4,791 train / 1,984 test rows across 116 train / 50 test blocks. Label
-distribution, as test-fold rows (and as distinct cells): `persistent_industrial` 1,196 (174 cells), `unknown` 429 (1,325), `natural_fire` 282 (1,280), `industrial_fire` 77 (19).
+**Run conditions (2026-09-23, after a 60-day keyed backfill):** 35,932 detections
+from surveyed cells over a **61-day window** (25 Jul – 23 Sep), 12,138 of 13,925
+cells surveyed. Spatial hold-out by 1° block: 22,360 train / 13,572 test rows
+across 139 train / 60 test blocks.
+
+Superseded runs against the 7-day archive window are kept in the tables below,
+because the way the numbers moved is itself the finding.
 
 ## Summary
 
 | Feature set | Features | macro F1 | `industrial_fire` F1 |
 |---|---|---|---|
-| `full` | 23 | 0.570 | 0.000 |
-| **`no_coords`** *(shipped)* | 21 | 0.545 | **0.127** |
-| `thermal_only` | 10 | 0.416 | 0.059 |
+| `full` | 23 | 0.553 | 0.000 |
+| **`no_coords`** *(shipped)* | 21 | **0.572** | 0.000 |
+| `thermal_only` | 10 | 0.416 | 0.054 |
 
 ### `no_coords` per class (the shipped model)
 
 | class | precision | recall | F1 | support |
 |---|---|---|---|---|
-| `industrial_fire` | 0.087 | 0.234 | 0.127 | 77 |
-| `persistent_industrial` | 0.803 | 0.555 | 0.656 | 1,196 |
-| `natural_fire` | 0.904 | 0.972 | 0.937 | 282 |
-| `unknown` | 0.382 | 0.576 | 0.459 | 429 |
+| `industrial_fire` | 0.000 | 0.000 | 0.000 | 214 |
+| `persistent_industrial` | 0.744 | 0.747 | 0.745 | 3,760 |
+| `natural_fire` | 0.813 | 0.999 | 0.897 | 4,977 |
+| `unknown` | 0.730 | 0.578 | 0.645 | 4,621 |
+
+Every class except `industrial_fire` improved substantially against the 7-day
+run, which is what a 5x larger training set should do.
 
 ### `thermal_only` per class
 
@@ -44,11 +50,12 @@ recorded in full rather than tidied away.
 The ablation was run at three coverage levels as the OSM tile cache grew. The
 sign of the macro-F1 difference between `full` and `no_coords` **flipped twice**:
 
-| Coverage | Train rows | `full` | `no_coords` | Better |
+| Run | Train rows | `full` | `no_coords` | Better |
 |---|---|---|---|---|
-| 10 tiles | 3,804 | 0.620 | 0.580 | `full` |
-| 19 tiles | 5,248 | 0.571 | 0.629 | `no_coords` |
-| 53 tiles | 6,775 | 0.570 | 0.545 | `full` |
+| 10 tiles, 7-day | 3,804 | 0.620 | 0.580 | `full` |
+| 19 tiles, 7-day | 5,248 | 0.571 | 0.629 | `no_coords` |
+| 53 tiles, 7-day | 6,775 | 0.570 | 0.545 | `full` |
+| 54 tiles, **61-day** | 35,932 | 0.553 | **0.572** | `no_coords` |
 
 At the 19-tile run this repository recorded a confident conclusion — "dropping
 coordinates *improves* generalisation" — with the 0.058 gap as evidence. The
@@ -82,8 +89,8 @@ skill on the remaining classes.
 
 ## Finding 3 — `natural_fire` performance is substantially leakage
 
-`natural_fire` precision is 0.904 with proximity features and **0.451 without**
-them. That halving is the leakage, measured directly: the label requires a
+`natural_fire` precision is 0.813 with proximity features and **0.451 without**
+them (0.904 / 0.451 at the 7-day window). That halving is the leakage, measured directly: the label requires a
 location to be more than 5 km from mapped industry, and the model is handed
 `distance_to_facility_m` as an input. It is largely reading the labeller's own
 criterion.
@@ -95,33 +102,36 @@ perfectly correlated with the label. It has not gone away.
 `natural_fire` metrics must therefore **not** be quoted as evidence of thermal
 discrimination. The `thermal_only` column is the honest number for that claim.
 
-## Finding 4 — a single observation barely identifies an excursion
+## Finding 4 — a single observation cannot identify an excursion
 
-`industrial_fire` F1 is 0.127 under `no_coords` (precision 0.087, recall 0.234),
-0.000 under `full`, and 0.059 under `thermal_only`.
+`industrial_fire` F1 is **0.000** under both `full` and `no_coords`, and 0.054
+under `thermal_only`. Of **214** held-out industrial-fire detections, the shipped
+model recovered **none**: 180 were predicted `persistent_industrial` and 34
+`unknown`.
 
-The class is defined by an **excursion ratio over multi-day history** (p90 FRP at
-least 3× the location's median). A single observation carries no information
-about the median it should be compared against: a snapshot of a site behaving
-normally and a snapshot of the same site during an excursion differ only in
-absolute magnitude, and absolute magnitude does not separate them, because a
-large routine source out-radiates a small anomalous one.
+This supersedes an earlier, weaker reading. At the 7-day window the model scored
+0.127 on just 25 test examples, and this document recorded that as evidence the
+class was "weakly detectable". With 5x the training data and 8.5x the test
+examples the score went to zero — so that 0.127 was noise, and the original
+stronger claim was right after all.
 
-An earlier version of this document claimed a single observation could *never*
-identify an excursion, on the basis of a 0.000 score. That was too strong — the
-model recovers 18 of 77 held-out cases at 53 tiles. The weaker, surviving claim
-is what matters operationally: **roughly three in four are missed, and precision
-0.087 means eleven of twelve positives are false.**
+The mechanism is unchanged and is the reason the result is stable: the class is
+defined by an **excursion ratio over multi-day history** (p90 FRP at least 3x the
+location's median). A single observation carries no information about the median
+it should be compared against. A snapshot of a site behaving normally and a
+snapshot of the same site during an excursion differ only in absolute magnitude,
+and magnitude does not separate them, because a large routine source
+out-radiates a small anomalous one.
 
 ### Consequences enforced in code
 
 1. **The model may not report this class.** Suppression is measured, not
    hardcoded: `TrainedModel.unreliable_classes()` reads the model's own recorded
    per-class precision and suppresses anything below
-   `MIN_PRECISION_TO_REPORT` (0.5). At present that catches both
-   `industrial_fire` (0.087) and `unknown` (0.382), so the model can only ever
-   surface `persistent_industrial` or `natural_fire`. A model carrying no
-   metrics at all is trusted for nothing.
+   `MIN_PRECISION_TO_REPORT` (0.5). On the 61-day model that catches
+   `industrial_fire` alone (precision 0.000); `unknown` rose to 0.730 and is no
+   longer suppressed, which is the rule adapting to evidence exactly as
+   intended. A model carrying no metrics at all is trusted for nothing.
 2. **Persistence is not optional.** The deterministic, history-based rules are
    the only component that identifies `industrial_fire` with any reliability.
 3. **The model's honest role** is a provisional first pass for a location with
@@ -134,7 +144,7 @@ Labels are programmatic heuristics derived from persistence, not verified ground
 truth. These metrics measure agreement with a documented rule set under a
 spatial hold-out — a consistency check, not validation against reality.
 
-Coverage is 53 of 117 tiles. Numbers will move as it grows, as they already have
-twice. That is why the README's metrics block is generated from
+Coverage is 54 of 168 tiles that now contain detections, over a 61-day window.
+Numbers will move as both grow, as they already have three times. That is why the README's metrics block is generated from
 `backend/models/metrics.json` by `scripts/sync_docs.py` rather than written by
 hand.

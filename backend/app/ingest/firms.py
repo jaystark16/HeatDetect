@@ -34,6 +34,7 @@ USER_AGENT: Final = (
 )
 
 BASE: Final = "https://firms.modaps.eosdis.nasa.gov/data/active_fire"
+API_BASE: Final = "https://firms.modaps.eosdis.nasa.gov/api"
 
 Instrument = Literal["VIIRS", "MODIS"]
 Window = Literal["24h", "7d"]
@@ -87,6 +88,21 @@ PRODUCTS: Final[tuple[Product, ...]] = (
         dataset_id="firms_modis_c61",
     ),
 )
+
+# Product names for the keyed /api/area/ endpoint. These differ from the
+# archive path names, so they are mapped explicitly rather than derived.
+API_PRODUCT_NAMES: Final[dict[str, str]] = {
+    "snpp": "VIIRS_SNPP_NRT",
+    "noaa20": "VIIRS_NOAA20_NRT",
+    "noaa21": "VIIRS_NOAA21_NRT",
+    "modis": "MODIS_NRT",
+}
+
+# The keyed endpoint rejects anything longer. Measured: a 7-day request returns
+# the plain-text body "Invalid day range. Expects [1..5]." with HTTP 200, so a
+# caller that only checks the status code sees a successful empty result.
+API_MAX_DAYS: Final = 5
+
 
 # FIRMS reports the platform per row with short codes. Mapping them here keeps
 # the raw code in the database and a readable name in the UI.
@@ -225,6 +241,85 @@ def fetch(
         product=product,
         window=window,
         url=url,
+        fetched_at=datetime.now(timezone.utc),
+        body=body,
+        byte_count=len(response.content),
+    )
+
+
+def fetch_area(
+    product: Product,
+    *,
+    map_key: str,
+    days: int,
+    start_date: str | None = None,
+    bbox: tuple[float, float, float, float],
+    client: httpx.Client | None = None,
+) -> FetchResult:
+    """Fetch an exact bounding box from the keyed /api/area/ endpoint.
+
+    This is the *only* thing the project uses a MAP_KEY for, and it exists for
+    one reason: the open archives carry a rolling 7-day window, so a baseline
+    computed from them is a 7-day baseline. This endpoint accepts a start date
+    and serves data months back, which is what makes a genuinely long-term
+    baseline possible — and persistence is the discriminator the whole system
+    rests on.
+
+    `bbox` is (min_lon, min_lat, max_lon, max_lat); FIRMS wants west,south,east,north,
+    which is the same order.
+
+    Raises `FirmsUnavailable` on anything that is not a FIRMS CSV. That guard
+    matters more here than on the archives: this endpoint reports errors such as
+    "Invalid day range" as a **200 response with a plain-text body**, so a caller
+    checking only the status code would read a failure as "no fires here".
+    """
+    if not map_key:
+        raise FirmsUnavailable(
+            "fetch_area requires a FIRMS MAP_KEY. The open archives need none — "
+            "use fetch() instead."
+        )
+    if not 1 <= days <= API_MAX_DAYS:
+        raise ValueError(
+            f"days must be 1..{API_MAX_DAYS} for the keyed endpoint; got {days}"
+        )
+
+    api_product = API_PRODUCT_NAMES[product.id]
+    min_lon, min_lat, max_lon, max_lat = bbox
+    area = f"{min_lon},{min_lat},{max_lon},{max_lat}"
+    url = f"{API_BASE}/area/csv/{map_key}/{api_product}/{area}/{days}"
+    if start_date:
+        url = f"{url}/{start_date}"
+
+    owned = client is None
+    client = client or httpx.Client(
+        headers={"User-Agent": USER_AGENT},
+        timeout=httpx.Timeout(180.0),
+        follow_redirects=True,
+    )
+    try:
+        response = client.get(url)
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        raise FirmsUnavailable(f"Fetching keyed area failed: {exc}") from exc
+    finally:
+        if owned:
+            client.close()
+
+    body = response.text
+    if not body.lstrip().lower().startswith("latitude"):
+        # Never let this look like an empty region.
+        raise FirmsUnavailable(
+            f"Keyed area request did not return a FIRMS CSV. Response began: "
+            f"{body[:120]!r}"
+        )
+
+    return FetchResult(
+        product=product,
+        window=f"{days}d@{start_date or 'latest'}",  # type: ignore[arg-type]
+        # The key is deliberately omitted from the recorded URL so it cannot
+        # reach the audit table, the logs, or /api/runs.
+        url=f"{API_BASE}/area/csv/<MAP_KEY>/{api_product}/{area}/{days}"
+        + (f"/{start_date}" if start_date else ""),
         fetched_at=datetime.now(timezone.utc),
         body=body,
         byte_count=len(response.content),

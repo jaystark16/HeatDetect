@@ -1,5 +1,5 @@
 import { CLASS_ORDER, CLASS_STYLES } from "../classes";
-import type { Analytics, Filters, ThermalClass } from "../types";
+import type { Analytics, Filters, Provenance, ThermalClass } from "../types";
 
 interface Props {
   filters: Filters;
@@ -10,19 +10,48 @@ interface Props {
 const TIME_WINDOWS: { value: Filters["withinHours"]; label: string }[] = [
   { value: 24, label: "Last 24 hours" },
   { value: 72, label: "Last 3 days" },
-  { value: "all", label: "Full 7-day window" },
+  { value: 168, label: "Last 7 days" },
 ];
 
 /**
- * Persistence thresholds mirror the classification rules: 4+ distinct days is
- * the criterion for a persistent source, so it is offered directly rather than
- * leaving the user to discover it.
+ * Label the unfiltered option with the window the data actually spans.
+ *
+ * It used to read "Full 7-day window", which was true when the database held
+ * one archive fetch. The pipeline appends, so after two months of runs the
+ * database spanned 60 days and the label was simply wrong. Deriving it from
+ * provenance means it cannot drift again.
+ */
+function allWindowLabel(provenance: Provenance | null | undefined): string {
+  const oldest = provenance?.oldest_detection_at;
+  const newest = provenance?.newest_detection_at;
+  if (!oldest || !newest) return "All ingested data";
+
+  const days = Math.max(
+    1,
+    Math.round((Date.parse(newest) - Date.parse(oldest)) / 86_400_000),
+  );
+  return `All ingested data (${days} days)`;
+}
+
+/**
+ * Display filter over a location's distinct-day count.
+ *
+ * These are *not* the classification threshold, and the labels deliberately no
+ * longer claim to be. That threshold is window-relative in
+ * `backend/app/labels.py` — a quarter of the days available to observe, floored
+ * at four — so it is 4 against a 7-day archive and 16 against a 61-day
+ * backfill. Naming a fixed number here as "persistent" was true only for the
+ * original one-week window and silently became wrong once history grew.
  */
 const PERSISTENCE_STEPS: { value: number; label: string }[] = [
   { value: 0, label: "Any" },
   { value: 2, label: "2+ days (recurring)" },
-  { value: 4, label: "4+ days (persistent)" },
-  { value: 6, label: "6+ days (continuous)" },
+  { value: 4, label: "4+ days" },
+  { value: 14, label: "14+ days (long-running)" },
+  // The database accumulates, so baselines lengthen over time; locations in
+  // the Jharia coalfield now reach 46 distinct days. A 6-day ceiling stopped
+  // discriminating once the window grew past a week.
+  { value: 30, label: "30+ days (entrenched)" },
 ];
 
 export default function FilterPanel({ filters, analytics, onChange }: Props) {
@@ -69,6 +98,7 @@ export default function FilterPanel({ filters, analytics, onChange }: Props) {
               {w.label}
             </option>
           ))}
+          <option value="all">{allWindowLabel(analytics?.provenance)}</option>
         </select>
       </div>
 

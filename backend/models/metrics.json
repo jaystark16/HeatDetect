@@ -1,35 +1,35 @@
 {
-  "model_version": "rf-20260918-no_coords-rule-v1-488beffa",
-  "trained_at": "2026-09-18T12:06:15.154094+00:00",
+  "model_version": "rf-20260923-no_coords-rule-v1-b9e6ab4c",
+  "trained_at": "2026-09-23T08:08:06.811684+00:00",
   "feature_set": "no_coords",
   "feature_count": 21,
   "per_class": {
     "industrial_fire": {
-      "precision": 0.08695652173913043,
-      "recall": 0.23376623376623376,
-      "f1": 0.1267605633802817,
-      "support": 77
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 214
     },
     "persistent_industrial": {
-      "precision": 0.8029020556227328,
-      "recall": 0.5551839464882943,
-      "f1": 0.6564508156203658,
-      "support": 1196
+      "precision": 0.743841059602649,
+      "recall": 0.7468085106382979,
+      "f1": 0.7453218314532183,
+      "support": 3760
     },
     "natural_fire": {
-      "precision": 0.9042904290429042,
-      "recall": 0.9716312056737588,
-      "f1": 0.9367521367521368,
-      "support": 282
+      "precision": 0.8133791298658816,
+      "recall": 0.9991963029937714,
+      "f1": 0.8967631412857272,
+      "support": 4977
     },
     "unknown": {
-      "precision": 0.38176197836166925,
-      "recall": 0.5757575757575758,
-      "f1": 0.4591078066914498,
-      "support": 429
+      "precision": 0.7296336796063423,
+      "recall": 0.57758061025752,
+      "f1": 0.6447638603696099,
+      "support": 4621
     }
   },
-  "macro_f1": 0.5447678306110585,
+  "macro_f1": 0.5717122082771389,
   "confusion_matrix": {
     "labels": [
       "industrial_fire",
@@ -39,65 +39,65 @@
     ],
     "matrix": [
       [
-        18,
-        30,
         0,
-        29
+        180,
+        0,
+        34
       ],
       [
-        169,
-        664,
+        1,
+        2808,
         0,
-        363
+        951
       ],
       [
         0,
         0,
-        274,
-        8
+        4973,
+        4
       ],
       [
-        20,
-        133,
-        29,
-        247
+        24,
+        787,
+        1141,
+        2669
       ]
     ]
   },
   "feature_importance": {
-    "distance_to_facility_m": 0.26959208713517624,
-    "facilities_within_5km": 0.219118054278382,
-    "land_cover_barren": 0.11488425260808353,
-    "land_cover_industrial": 0.05837730310662038,
-    "land_cover_unknown": 0.05509705396563769,
-    "brightness_k": 0.04630257386954316,
-    "facility_distance_missing": 0.041730583587303735,
-    "dual_band_delta_k": 0.035039989168210085,
-    "frp_mw": 0.033682070325150255,
-    "brightness_long_k": 0.03168803973717796,
-    "log_frp": 0.03009096972439326,
-    "is_night": 0.024849628521186287,
-    "scan": 0.01616204033624177,
-    "track": 0.014272669263532494,
-    "land_cover_forest": 0.007806667873824466,
-    "is_viirs": 0.0006846680094976068,
-    "confidence_ordinal": 0.0006213484900390106,
+    "distance_to_facility_m": 0.370574014907157,
+    "facilities_within_5km": 0.24522886420996584,
+    "land_cover_unknown": 0.06731918605985492,
+    "brightness_k": 0.04300528550201207,
+    "brightness_long_k": 0.04094572185240808,
+    "facility_distance_missing": 0.035836524143032594,
+    "dual_band_delta_k": 0.03288441116805572,
+    "land_cover_industrial": 0.02835828562628224,
+    "frp_mw": 0.025174073316322886,
+    "is_night": 0.023458231604884184,
+    "log_frp": 0.022359240963481363,
+    "land_cover_barren": 0.02152110026236791,
+    "scan": 0.014694498041537947,
+    "land_cover_forest": 0.013652535258254155,
+    "track": 0.013205211858393812,
+    "is_viirs": 0.0009493494724084102,
+    "confidence_ordinal": 0.0008334657535809725,
     "land_cover_urban": 0.0,
     "land_cover_cropland": 0.0,
     "land_cover_shrubland": 0.0,
     "land_cover_water": 0.0
   },
-  "training_rows": 4791,
-  "test_rows": 1984,
-  "train_blocks": 116,
-  "test_blocks": 50,
+  "training_rows": 22360,
+  "test_rows": 13572,
+  "train_blocks": 139,
+  "test_blocks": 60,
   "label_rule_version": "rule-v1",
   "split": "spatial block hold-out, 1 degree blocks",
   "label_distribution": {
-    "natural_fire": 1706,
-    "unknown": 1912,
-    "persistent_industrial": 2712,
-    "industrial_fire": 445
+    "natural_fire": 11656,
+    "unknown": 13507,
+    "persistent_industrial": 10089,
+    "industrial_fire": 680
   },
-  "unsurveyed_cells_excluded": 366
+  "unsurveyed_cells_excluded": 1787
 }

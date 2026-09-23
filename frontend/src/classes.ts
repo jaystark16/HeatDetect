@@ -94,9 +94,16 @@ export function resolvePalette(root: HTMLElement = document.documentElement): Pa
  * distribution — real FRP here is median ~1.6 MW and p99 ~18 MW, so the useful
  * range is small numbers, not the hundreds an earlier draft assumed.
  */
-export function radiusFromFrp(frpMw: number): number {
+export function radiusFromFrp(frpMw: number, cls?: ThermalClass): number {
   const r = 3 + Math.sqrt(Math.max(frpMw, 0)) * 1.6;
-  return Math.min(Math.max(r, 3.5), 18);
+  const clamped = Math.min(Math.max(r, 3.5), 18);
+
+  // Unclassified marks are held smaller on purpose. They are the least
+  // informative thing on the map, and at full size a high-FRP hollow mark
+  // renders as a large dark disc that pulls the eye harder than the classified
+  // sources beside it — exactly backwards. Shrinking them lets them stay
+  // visible and countable without competing.
+  return cls === "unknown" ? Math.min(clamped, 7) : clamped;
 }
 
 /**
