@@ -19,11 +19,14 @@ import type {
   Analytics,
   DatasetInfo,
   Filters,
-  HotspotCollection,
   HotspotDetail,
+  HotspotSummary,
+  LocationCollection,
+  LocationSummary,
+  MapMark,
   ModelInfo,
+  Provenance,
   SearchResponse,
-  ThermalClass,
 } from "./types";
 
 const BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
@@ -76,29 +79,7 @@ async function get<T>(
   return (await response.json()) as T;
 }
 
-/**
- * Per-class quotas for the map.
- *
- * The API orders by persistence descending, which is right for an operator
- * scanning for recurring sources but wrong for drawing a map. Once the
- * database had accumulated 60 days, the top 4,000 rows all had 30+ distinct
- * days — every one an industrial source — and the map showed **zero** of the
- * 7,433 vegetation-fire locations in the database. The dashboard was implying
- * India's thermal anomalies are overwhelmingly industrial.
- *
- * Quotas are applied here rather than in the API because representativeness is
- * a presentation concern: `/api/hotspots` stays a plain, honest query
- * interface, and `total_matching` keeps meaning what it says.
- */
-const CLASS_QUOTAS: Record<ThermalClass, number> = {
-  // Rare and operationally important: never truncated in practice.
-  industrial_fire: 800,
-  persistent_industrial: 1400,
-  natural_fire: 1400,
-  unknown: 800,
-};
-
-function toParams(filters: Filters, limit: number): URLSearchParams {
+function toParams(filters: Filters, limit?: number): URLSearchParams {
   const params = new URLSearchParams();
   if (filters.label !== "all") params.set("label", filters.label);
   if (filters.minFrpMw > 0) params.set("min_frp_mw", String(filters.minFrpMw));
@@ -108,54 +89,66 @@ function toParams(filters: Filters, limit: number): URLSearchParams {
   if (filters.withinHours !== "all") {
     params.set("within_hours", String(filters.withinHours));
   }
-  params.set("limit", String(limit));
+  if (limit !== undefined) params.set("limit", String(limit));
   return params;
 }
 
 /**
- * Fetch a class-balanced set for the map.
+ * Marks for the map, one per ~1 km cell.
  *
- * When the user has already filtered to one class there is nothing to balance,
- * so a single request is made and the quota for that class applies.
+ * `/api/locations` aggregates server-side and returns **every** matching cell,
+ * so nothing is sampled and no class can be crowded out. The previous approach
+ * fetched detections and deduplicated client-side, which was both wasteful and
+ * biased: a recurring source emits one detection per satellite pass, so 3,000
+ * detection rows yielded only 23 distinct persistent-industrial locations while
+ * vegetation fires — episodic by definition — were squeezed out entirely.
  */
-async function fetchRepresentative(filters: Filters): Promise<HotspotCollection> {
-  if (filters.label !== "all") {
-    return get<HotspotCollection>(
-      "/api/hotspots",
-      toParams(filters, CLASS_QUOTAS[filters.label]),
-    );
-  }
-
-  const labels = Object.keys(CLASS_QUOTAS) as ThermalClass[];
-  const pages = await Promise.all(
-    labels.map((label) =>
-      get<HotspotCollection>(
-        "/api/hotspots",
-        toParams({ ...filters, label }, CLASS_QUOTAS[label]),
-      ),
-    ),
+async function fetchMarks(filters: Filters): Promise<MarkCollection> {
+  const page = await get<LocationCollection>(
+    "/api/locations",
+    toParams(filters),
   );
-
-  const hotspots = pages.flatMap((page) => page.hotspots);
-  // Most persistent first, so the visually heaviest marks are the informative
-  // ones; MapView re-sorts for draw order.
-  hotspots.sort(
-    (a, b) =>
-      b.distinct_days - a.distinct_days ||
-      b.frp_mw - a.frp_mw ||
-      a.id.localeCompare(b.id),
-  );
-
   return {
-    count: hotspots.length,
-    // Sum of the per-class totals: the true number of detections matching the
-    // user's filters, independent of how many the map draws.
-    total_matching: pages.reduce((sum, page) => sum + page.total_matching, 0),
-    limit: hotspots.length,
-    offset: 0,
-    hotspots,
-    provenance: pages[0].provenance,
+    marks: page.locations.map(locationToMark),
+    totalMatching: page.total_matching,
+    provenance: page.provenance,
   };
+}
+
+function locationToMark(location: LocationSummary): MapMark {
+  return {
+    id: location.representative_detection_id,
+    cell_id: location.cell_id,
+    latitude: location.latitude,
+    longitude: location.longitude,
+    label: location.label,
+    distinct_days: location.distinct_days,
+    frp_mw: location.max_frp_mw,
+  };
+}
+
+/** Collapse cached-snapshot detections to one mark per cell. */
+function summariesToMarks(rows: HotspotSummary[]): MapMark[] {
+  const best = new Map<string, HotspotSummary>();
+  for (const row of rows) {
+    const existing = best.get(row.cell_id);
+    if (!existing || row.frp_mw > existing.frp_mw) best.set(row.cell_id, row);
+  }
+  return [...best.values()].map((row) => ({
+    id: row.id,
+    cell_id: row.cell_id,
+    latitude: row.latitude,
+    longitude: row.longitude,
+    label: row.label,
+    distinct_days: row.distinct_days,
+    frp_mw: row.frp_mw,
+  }));
+}
+
+export interface MarkCollection {
+  marks: MapMark[];
+  totalMatching: number;
+  provenance: Provenance;
 }
 
 export interface Loaded<T> {
@@ -170,15 +163,16 @@ export interface Loaded<T> {
  * A snapshot read that also fails rethrows the original API error: the API being
  * down is the actionable fact, not a secondary failure to read a local file.
  */
-async function withFallback<T>(
-  live: () => Promise<T>,
-  cached: () => Promise<T>,
+async function withFallback<T, A extends unknown[]>(
+  live: (...args: A) => Promise<T>,
+  cached: (...args: A) => Promise<T>,
+  ...args: A
 ): Promise<Loaded<T>> {
   try {
-    return { data: await live(), fromSnapshot: false, snapshot: null };
+    return { data: await live(...args), fromSnapshot: false, snapshot: null };
   } catch (apiError) {
     try {
-      const [data, snapshot] = await Promise.all([cached(), fallbackMeta()]);
+      const [data, snapshot] = await Promise.all([cached(...args), fallbackMeta()]);
       return { data, fromSnapshot: true, snapshot };
     } catch {
       throw apiError;
@@ -187,11 +181,15 @@ async function withFallback<T>(
 }
 
 export const api = {
-  hotspots: (filters: Filters) =>
-    withFallback(
-      () => fetchRepresentative(filters),
-      () => fallbackHotspots(filters),
-    ),
+  marks: (filters: Filters) =>
+    withFallback(fetchMarks, async () => {
+      const page = await fallbackHotspots(filters);
+      return {
+        marks: summariesToMarks(page.hotspots),
+        totalMatching: page.total_matching,
+        provenance: page.provenance,
+      };
+    }, filters),
 
   analytics: () =>
     withFallback(() => get<Analytics>("/api/analytics"), fallbackAnalytics),

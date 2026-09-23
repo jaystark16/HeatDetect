@@ -171,6 +171,48 @@ export interface ModelInfo {
   caveat: string;
 }
 
+/** One ~1 km cell — mirrors `LocationSummary` in backend/app/schemas.py. */
+export interface LocationSummary {
+  cell_id: string;
+  latitude: number;
+  longitude: number;
+  label: ThermalClass;
+  distinct_days: number;
+  observation_count: number;
+  max_frp_mw: number;
+  median_frp_mw: number;
+  last_seen: string;
+  /** Highest-FRP detection here; what the detail panel opens. */
+  representative_detection_id: string;
+}
+
+export interface LocationCollection {
+  count: number;
+  total_matching: number;
+  limit: number;
+  locations: LocationSummary[];
+  provenance: Provenance;
+}
+
+/**
+ * What the map needs to draw one mark.
+ *
+ * Deliberately narrower than either source type. Locations and cached-snapshot
+ * detections carry different fields, and a shared shape means neither has to
+ * invent a value it does not have to satisfy the other.
+ */
+export interface MapMark {
+  /** Detection id to open in the detail panel. */
+  id: string;
+  cell_id: string;
+  latitude: number;
+  longitude: number;
+  label: ThermalClass;
+  distinct_days: number;
+  /** Strongest observation at this location; drives mark size. */
+  frp_mw: number;
+}
+
 export interface SearchMatch {
   kind: "coordinates" | "facility" | "detection";
   label: string;

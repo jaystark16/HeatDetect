@@ -13,10 +13,11 @@ import {
   CLASS_STYLES,
   radiusFromFrp,
   resolvePalette,
+  STROKE_OPACITY,
   strokeWeightFromDays,
   type Palette,
 } from "../classes";
-import type { HotspotSummary } from "../types";
+import type { MapMark } from "../types";
 
 /** Fallback view when there is nothing to frame. */
 const INDIA_CENTER: [number, number] = [21.5, 80.0];
@@ -27,7 +28,7 @@ function FitToData({
   hotspots,
   suspended,
 }: {
-  hotspots: HotspotSummary[];
+  hotspots: MapMark[];
   /** True once the user has searched: refitting would undo their navigation. */
   suspended: boolean;
 }) {
@@ -111,9 +112,9 @@ export interface FocusTarget {
 }
 
 interface Props {
-  hotspots: HotspotSummary[];
+  hotspots: MapMark[];
   selectedId: string | null;
-  onSelect: (hotspot: HotspotSummary) => void;
+  onSelect: (mark: MapMark) => void;
   focus: FocusTarget | null;
 }
 
@@ -213,14 +214,18 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
                     : strokeWeightFromDays(hotspot.distinct_days),
                 fillColor: colours.fill,
                 fillOpacity: style.fill === "hollow" ? 0.12 : 0.85,
-                opacity: hotspot.label === "unknown" ? 0.55 : 1,
+                opacity: selected
+                  ? 1
+                  : hotspot.label === "unknown"
+                    ? 0.4
+                    : STROKE_OPACITY,
               }}
               eventHandlers={{ click: () => onSelect(hotspot) }}
             >
               <Tooltip direction="top" offset={[0, -radius]}>
                 <strong>{style.shortLabel}</strong>
                 <br />
-                {hotspot.frp_mw.toFixed(2)} MW
+                {hotspot.frp_mw.toFixed(2)} MW peak
                 <br />
                 {hotspot.distinct_days} distinct{" "}
                 {hotspot.distinct_days === 1 ? "day" : "days"} at this location

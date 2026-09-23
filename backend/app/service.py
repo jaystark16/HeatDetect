@@ -55,6 +55,8 @@ from .schemas import (
     HotspotDetail,
     HotspotSummary,
     IngestRunInfo,
+    LocationCollection,
+    LocationSummary,
     ModelInfo,
     Observation,
     Persistence,
@@ -357,6 +359,144 @@ def list_hotspots(engine: Engine, filters: HotspotFilters) -> HotspotCollection:
     )
 
 
+# -------------------------------------------------------------- locations --
+
+
+@dataclass
+class LocationFilters:
+    label: str | None = None
+    min_frp_mw: float | None = None
+    min_distinct_days: int | None = None
+    within_hours: int | None = None
+    bbox: tuple[float, float, float, float] | None = None
+    limit: int = 20000
+
+
+def list_locations(engine: Engine, filters: LocationFilters) -> LocationCollection:
+    """One row per ~1 km cell, which is what the map should draw.
+
+    Returning detections forced the client to over-fetch ruinously: 3,000
+    detection rows (711 KiB) yielded only 23 distinct persistent-industrial
+    locations, because a recurring source emits one row per satellite pass.
+    Aggregating server-side means the whole country fits in one modest
+    response and no sampling is needed.
+
+    The representative detection is the highest-FRP observation in the cell,
+    so mark size reflects the most energetic thing seen there and the detail
+    panel opens something real rather than a synthetic average.
+    """
+    # Strongest observation per cell, used for both the mark size and the id
+    # the detail panel opens.
+    peak = (
+        select(
+            detections.c.cell_id.label("cell_id"),
+            func.max(detections.c.frp_mw).label("max_frp"),
+        )
+        .group_by(detections.c.cell_id)
+        .subquery()
+    )
+
+    rep = (
+        select(
+            detections.c.cell_id.label("cell_id"),
+            func.min(detections.c.detection_id).label("detection_id"),
+            func.min(detections.c.latitude).label("latitude"),
+            func.min(detections.c.longitude).label("longitude"),
+        )
+        .join(
+            peak,
+            and_(
+                detections.c.cell_id == peak.c.cell_id,
+                detections.c.frp_mw == peak.c.max_frp,
+            ),
+        )
+        .group_by(detections.c.cell_id)
+        .subquery()
+    )
+
+    base = (
+        cell_stats.join(cell_labels, cell_stats.c.cell_id == cell_labels.c.cell_id)
+        .join(rep, cell_stats.c.cell_id == rep.c.cell_id)
+        .join(peak, cell_stats.c.cell_id == peak.c.cell_id)
+    )
+
+    clauses = []
+    if filters.label:
+        clauses.append(cell_labels.c.label == filters.label)
+    if filters.min_distinct_days is not None:
+        clauses.append(cell_stats.c.distinct_days >= filters.min_distinct_days)
+    if filters.min_frp_mw is not None:
+        clauses.append(peak.c.max_frp >= filters.min_frp_mw)
+    if filters.within_hours is not None:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=filters.within_hours)
+        clauses.append(cell_stats.c.last_seen >= cutoff)
+    if filters.bbox:
+        min_lon, min_lat, max_lon, max_lat = filters.bbox
+        clauses.append(
+            and_(
+                rep.c.latitude >= min_lat,
+                rep.c.latitude <= max_lat,
+                rep.c.longitude >= min_lon,
+                rep.c.longitude <= max_lon,
+            )
+        )
+
+    where = and_(*clauses) if clauses else None
+
+    with engine.connect() as conn:
+        total_stmt = select(func.count()).select_from(base)
+        if where is not None:
+            total_stmt = total_stmt.where(where)
+        total = conn.execute(total_stmt).scalar_one()
+
+        stmt = select(
+            cell_stats.c.cell_id,
+            rep.c.latitude,
+            rep.c.longitude,
+            cell_labels.c.label,
+            cell_stats.c.distinct_days,
+            cell_stats.c.observation_count,
+            peak.c.max_frp,
+            cell_stats.c.median_frp_mw,
+            cell_stats.c.last_seen,
+            rep.c.detection_id,
+        ).select_from(base)
+        if where is not None:
+            stmt = stmt.where(where)
+
+        rows = conn.execute(
+            stmt.order_by(
+                cell_stats.c.distinct_days.desc(), peak.c.max_frp.desc()
+            ).limit(filters.limit)
+        ).all()
+
+        provenance = get_provenance(conn)
+
+    locations = [
+        LocationSummary(
+            cell_id=r.cell_id,
+            latitude=r.latitude,
+            longitude=r.longitude,
+            label=ThermalClass(r.label),
+            distinct_days=r.distinct_days,
+            observation_count=r.observation_count,
+            max_frp_mw=round(r.max_frp, 2),
+            median_frp_mw=round(r.median_frp_mw, 2),
+            last_seen=_utc(r.last_seen),
+            representative_detection_id=r.detection_id,
+        )
+        for r in rows
+    ]
+
+    return LocationCollection(
+        count=len(locations),
+        total_matching=int(total),
+        limit=filters.limit,
+        locations=locations,
+        provenance=provenance,
+    )
+
+
 def get_hotspot_detail(
     engine: Engine, detection_id: str, trained: ml.TrainedModel | None
 ) -> HotspotDetail | None:
@@ -578,7 +718,8 @@ def _escape_like(text: str) -> str:
     the value being interpreted as a pattern, which is a different bug with the
     same root cause: treating user text as syntax.
     """
-    return text.replace("\\", "\\\\").replace("%", "\%").replace("_", "\_")
+    escaped = text.replace(BACKSLASH, BACKSLASH * 2)
+    return escaped.replace("%", BACKSLASH + "%").replace("_", BACKSLASH + "_")
 
 
 def search(engine: Engine, query: str, limit: int = 10) -> SearchResponse:
@@ -713,6 +854,10 @@ def get_model_info(trained: ml.TrainedModel | None) -> ModelInfo:
 # Matches a URL carrying inline credentials, e.g.
 # postgresql://user:pw@host/db  (pragma: fake-credential)
 _CREDENTIAL_URL = re.compile(r"(?P<scheme>[a-z0-9+]+)://[^:/\s]+:[^@/\s]+@")
+
+# Named rather than written as a literal: the inline form produced
+# "invalid escape sequence" warnings under Python 3.13.
+BACKSLASH = chr(92)
 
 # Matches long hex runs, the shape of an API key such as a FIRMS MAP_KEY.
 _KEY_LIKE = re.compile(r"\b[0-9a-f]{16,}\b", re.IGNORECASE)

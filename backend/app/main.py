@@ -33,11 +33,12 @@ from .schemas import (
     HotspotCollection,
     HotspotDetail,
     IngestRunInfo,
+    LocationCollection,
     ModelInfo,
     SearchResponse,
     ThermalClass,
 )
-from .service import HotspotFilters
+from .service import HotspotFilters, LocationFilters
 
 logging.basicConfig(
     level=logging.INFO,
@@ -152,6 +153,38 @@ def _engine():
     return state.engine
 
 
+def _parse_bbox(
+    bbox: str | None,
+) -> tuple[float, float, float, float] | None:
+    """Validate a `min_lon,min_lat,max_lon,max_lat` query value.
+
+    Shared by the detection and location endpoints so the two cannot drift into
+    accepting different things.
+    """
+    if not bbox:
+        return None
+
+    try:
+        parts = [float(p) for p in bbox.split(",")]
+    except ValueError:
+        raise HTTPException(
+            status_code=422, detail="bbox values must be numbers"
+        ) from None
+
+    if len(parts) != 4:
+        raise HTTPException(
+            status_code=422,
+            detail="bbox must have four values: min_lon,min_lat,max_lon,max_lat",
+        )
+
+    min_lon, min_lat, max_lon, max_lat = parts
+    if min_lon >= max_lon or min_lat >= max_lat:
+        raise HTTPException(
+            status_code=422, detail="bbox minimums must be below maximums"
+        )
+    return min_lon, min_lat, max_lon, max_lat
+
+
 # ------------------------------------------------------------------ meta --
 
 
@@ -235,25 +268,7 @@ def list_hotspots(
     limit: Annotated[int, Query(ge=1, le=5000)] = 1000,
     offset: Annotated[int, Query(ge=0)] = 0,
 ) -> HotspotCollection:
-    parsed_bbox = None
-    if bbox:
-        try:
-            parts = [float(p) for p in bbox.split(",")]
-        except ValueError:
-            raise HTTPException(
-                status_code=422, detail="bbox values must be numbers"
-            ) from None
-        if len(parts) != 4:
-            raise HTTPException(
-                status_code=422,
-                detail="bbox must have four values: min_lon,min_lat,max_lon,max_lat",
-            )
-        min_lon, min_lat, max_lon, max_lat = parts
-        if min_lon >= max_lon or min_lat >= max_lat:
-            raise HTTPException(
-                status_code=422, detail="bbox minimums must be below maximums"
-            )
-        parsed_bbox = (min_lon, min_lat, max_lon, max_lat)
+    parsed_bbox = _parse_bbox(bbox)
 
     return service.list_hotspots(
         _engine(),
@@ -293,6 +308,35 @@ def search(
     nothing matches — a near-miss presented confidently is worse than nothing.
     """
     return service.search(_engine(), q, limit)
+
+
+@app.get("/api/locations", response_model=LocationCollection, tags=["hotspots"])
+def list_locations(
+    label: ThermalClass | None = None,
+    min_frp_mw: Annotated[float | None, Query(ge=0)] = None,
+    min_distinct_days: Annotated[int | None, Query(ge=1, le=400)] = None,
+    within_hours: Annotated[int | None, Query(ge=1, le=24 * 400)] = None,
+    bbox: Annotated[str | None, Query(description="min_lon,min_lat,max_lon,max_lat")] = None,
+    limit: Annotated[int, Query(ge=1, le=20000)] = 20000,
+) -> LocationCollection:
+    """One row per ~1 km cell — the unit classification operates on.
+
+    This is what the map should draw. `/api/hotspots` returns individual
+    detections, and a recurring source emits one per satellite pass, so
+    fetching detections to obtain locations is ruinously wasteful: 3,000
+    detection rows returned only 23 distinct persistent-industrial cells.
+    """
+    return service.list_locations(
+        _engine(),
+        LocationFilters(
+            label=label.value if label else None,
+            min_frp_mw=min_frp_mw,
+            min_distinct_days=min_distinct_days,
+            within_hours=within_hours,
+            bbox=_parse_bbox(bbox),
+            limit=limit,
+        ),
+    )
 
 
 @app.get("/api/analytics", response_model=Analytics, tags=["analytics"])

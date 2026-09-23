@@ -217,6 +217,37 @@ class Analytics(BaseModel):
     provenance: Provenance
 
 
+class LocationSummary(BaseModel):
+    """One ~1 km cell — the unit classification actually operates on.
+
+    The map draws these rather than raw detections. A long-running source
+    produces one detection per satellite pass, so a single cell can carry
+    hundreds of rows that all land on the same pixel; drawing them added no
+    information and stacked hundreds of outlines into an opaque blob.
+    """
+
+    cell_id: str
+    latitude: float
+    longitude: float
+    label: ThermalClass
+    distinct_days: int
+    observation_count: int
+    max_frp_mw: float = Field(description="Strongest single observation in this cell")
+    median_frp_mw: float
+    last_seen: datetime
+    representative_detection_id: str = Field(
+        description="Highest-FRP detection here; what the detail panel opens"
+    )
+
+
+class LocationCollection(BaseModel):
+    count: int
+    total_matching: int
+    limit: int
+    locations: list[LocationSummary]
+    provenance: Provenance
+
+
 class SearchMatch(BaseModel):
     """One place the user can navigate to.
 

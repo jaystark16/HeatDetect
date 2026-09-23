@@ -12,10 +12,10 @@ import type {
   DataMode,
   DatasetInfo,
   Filters,
-  HotspotCollection,
   HotspotDetail,
-  HotspotSummary,
+  MapMark,
   ModelInfo,
+  Provenance,
   SearchMatch,
 } from "./types";
 
@@ -28,12 +28,14 @@ const DEFAULT_FILTERS: Filters = {
 
 export default function App() {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
-  const [collection, setCollection] = useState<HotspotCollection | null>(null);
+  const [marks, setMarks] = useState<MapMark[] | null>(null);
+  const [totalMatching, setTotalMatching] = useState(0);
+  const [markProvenance, setMarkProvenance] = useState<Provenance | null>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
   const [datasets, setDatasets] = useState<DatasetInfo[]>([]);
   const [model, setModel] = useState<ModelInfo | null>(null);
 
-  const [selected, setSelected] = useState<HotspotSummary | null>(null);
+  const [selected, setSelected] = useState<MapMark | null>(null);
   const [detail, setDetail] = useState<HotspotDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailUnavailable, setDetailUnavailable] = useState(false);
@@ -64,18 +66,20 @@ export default function App() {
     setLoading(true);
     setError(null);
     try {
-      const [hotspots, stats] = await Promise.all([
-        api.hotspots(next),
+      const [marksResult, stats] = await Promise.all([
+        api.marks(next),
         api.analytics(),
       ]);
-      setCollection(hotspots.data);
+      setMarks(marksResult.data.marks);
+      setTotalMatching(marksResult.data.totalMatching);
+      setMarkProvenance(marksResult.data.provenance);
       setAnalytics(stats.data);
-      setFromSnapshot(hotspots.fromSnapshot);
+      setFromSnapshot(marksResult.fromSnapshot);
       setSnapshotWindow(
-        hotspots.snapshot
+        marksResult.snapshot
           ? {
-              oldest: hotspots.snapshot.oldestDetectionAt,
-              newest: hotspots.snapshot.newestDetectionAt,
+              oldest: marksResult.snapshot.oldestDetectionAt,
+              newest: marksResult.snapshot.newestDetectionAt,
             }
           : null,
       );
@@ -87,7 +91,7 @@ export default function App() {
           ? `${cause.message} The cached snapshot could not be loaded either.`
           : "Unexpected error loading data.",
       );
-      setCollection(null);
+      setMarks(null);
     } finally {
       setLoading(false);
     }
@@ -100,7 +104,7 @@ export default function App() {
   // Guards against a slow earlier request overwriting a newer selection's detail.
   const detailRequest = useRef(0);
 
-  const handleSelect = useCallback(async (hotspot: HotspotSummary) => {
+  const handleSelect = useCallback(async (hotspot: MapMark) => {
     const token = ++detailRequest.current;
     setSelected(hotspot);
     setDetail(null);
@@ -126,7 +130,7 @@ export default function App() {
     });
   }, []);
 
-  const provenance = collection?.provenance ?? analytics?.provenance ?? null;
+  const provenance = markProvenance ?? analytics?.provenance ?? null;
 
   const mode: DataMode = fromSnapshot
     ? "cached_snapshot"
@@ -134,9 +138,10 @@ export default function App() {
       ? "live"
       : "historical";
 
-  const hotspots = collection?.hotspots ?? [];
-  const truncated =
-    collection !== null && collection.total_matching > hotspots.length;
+  const hotspots = marks ?? [];
+  // /api/locations returns every matching cell, so the map is complete.
+  // Only the cached snapshot is ever a subset.
+  const truncated = fromSnapshot && totalMatching > hotspots.length;
 
   return (
     <div className="app">
@@ -161,7 +166,7 @@ export default function App() {
       <FilterPanel filters={filters} analytics={analytics} onChange={setFilters} />
 
       <div className="map">
-        {loading && !collection && (
+        {loading && !marks && (
           <div className="map__notice">
             Loading detections… if the API has been idle it may be starting up,
             which can take up to a minute.
@@ -177,7 +182,7 @@ export default function App() {
           </div>
         )}
 
-        {!loading && collection && hotspots.length === 0 && !error && (
+        {!loading && marks && hotspots.length === 0 && !error && (
           <div className="map__notice">
             No detections match these filters. Narrow time ranges can
             legitimately be empty.
@@ -186,11 +191,10 @@ export default function App() {
 
         {/* The map draws a class-balanced sample, not everything. Saying so is
             the difference between a readable map and a misleading one. */}
-        {!loading && collection && truncated && !error && (
+        {!loading && truncated && !error && (
           <div className="map__notice">
-            Showing {hotspots.length.toLocaleString()} of{" "}
-            {collection.total_matching.toLocaleString()} matching detections — a
-            balanced sample across all four classes, most persistent first.
+            Cached snapshot: showing {hotspots.length.toLocaleString()}{" "}
+            locations from {totalMatching.toLocaleString()} recorded detections.
             Counts in the panels below are for the full set.
           </div>
         )}
@@ -213,7 +217,7 @@ export default function App() {
       <StatsBar
         analytics={analytics}
         shown={hotspots.length}
-        totalMatching={collection?.total_matching ?? 0}
+        totalMatching={totalMatching}
       />
     </div>
   );

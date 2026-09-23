@@ -113,7 +113,16 @@ export function radiusFromFrp(frpMw: number, cls?: ThermalClass): number {
  * encoded visually rather than left buried in the detail panel.
  */
 export function strokeWeightFromDays(distinctDays: number): number {
-  if (distinctDays >= 5) return 2.5;
-  if (distinctDays >= 3) return 1.75;
-  return 1;
+  // Hairline only. The separator ring is drawn in the page background colour so
+  // marks stay legible over any basemap, but that makes it near-black — and
+  // where industrial sources cluster, hundreds of overlapping rings built into
+  // an opaque blob that buried the fills underneath. Measured on the canvas,
+  // #0d0d0d was the most-painted colour on the whole map.
+  //
+  // Persistence is still encoded, just gently: 1px to 1.5px rather than up to
+  // 2.5px. It reads at the zoom levels where individual marks are separable,
+  // and disappears into nothing at the zoom levels where they are not.
+  return distinctDays >= 30 ? 1.5 : 1;
 }
+
+export const STROKE_OPACITY = 0.45;
