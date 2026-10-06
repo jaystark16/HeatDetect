@@ -31,7 +31,7 @@ backend/data/*.db-wal
 # --- Deliberately TRACKED, listed here so the intent is explicit ---
 # backend/data/osm_cache/*.json.gz
 #   Overpass is rate-limited and slow (~30s/tile, frequent 504s). Committing the
-#   cache means a fresh clone, CI and a live demo need no Overpass access.
+#   cache means a fresh clone, CI and the production deploy need no Overpass access.
 #   ~1 MiB gzipped for 30 tiles.
 # backend/models/single_observation_rf.joblib
 #   The deployed API needs a model and the training database is not tracked.
@@ -48,3 +48,6 @@ Thumbs.db
 # Browser-automation screenshots and logs
 .playwright-mcp/
 frontend/public/details/
+
+# Cloudflare Worker local secrets (the Gemini key)
+.dev.vars

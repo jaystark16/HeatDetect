@@ -1,6 +1,8 @@
 # ADR 0008 — An on-device assistant that words answers but never supplies facts
 
 **Status:** accepted, 2026-10-07. Narrows [ADR 0007](0007-no-llm.md) for one task.
+Since [ADR 0009](0009-gemini-through-a-proxy.md), Gemini answers first and this on-device
+model is the offline fallback.
 
 ## Context
 

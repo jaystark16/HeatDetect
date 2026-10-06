@@ -69,6 +69,11 @@ jobs:
             echo "::error::A FIRMS MAP_KEY looks committed. Remove it and rotate the key."
             exit 1
           fi
+          # Google API keys. The Gemini key lives only in the proxy's secrets.
+          if git grep -nIE 'AIza[0-9A-Za-z_-]{35}' -- . ':!*.example'; then
+            echo "::error::A Google API key looks committed. Remove it and rotate the key."
+            exit 1
+          fi
 
       # Fake credentials are legitimate in the redaction tests and in the
       # comment documenting what the redactor matches. Rather than excluding

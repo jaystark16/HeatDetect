@@ -26,7 +26,7 @@ HTTP 504 for a strictly *smaller* tile minutes later. So:
 
 - Only tiles that contain a detection are ever queried.
 - Results are cached to disk, and **the cache is committed** — a fresh clone, CI
-  and a live demo need no Overpass access at all.
+  and the production deploy need no Overpass access at all.
 - Tiles are fetched highest-value first, so partial coverage is still useful.
 - Coverage is recorded per cell; an unfetched tile reports `not_surveyed`.
 

@@ -1,0 +1,69 @@
+name: Deploy assistant proxy
+
+# Deploys proxy/worker.mjs to Cloudflare Workers: the only place the Gemini key
+# lives. The key goes from a GitHub secret straight into the Worker's encrypted
+# secrets; it is never in the repository, the website or a log.
+#
+# Needs three repository secrets:
+#   CLOUDFLARE_API_TOKEN   a token with the "Edit Cloudflare Workers" template
+#   CLOUDFLARE_ACCOUNT_ID  from the Cloudflare dashboard
+#   GEMINI_API_KEY         from Google AI Studio
+# and, once the first deploy prints the Worker's URL, the repository variable
+# ASSISTANT_URL set to it, so the website build knows where to call.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "proxy/**"
+      - ".github/workflows/assistant.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: assistant
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check the secrets are present
+        env:
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GEMINI: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          missing=""
+          [ -n "$CF_TOKEN" ] || missing="$missing CLOUDFLARE_API_TOKEN"
+          [ -n "$CF_ACCOUNT" ] || missing="$missing CLOUDFLARE_ACCOUNT_ID"
+          [ -n "$GEMINI" ] || missing="$missing GEMINI_API_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing repository secrets:$missing"
+            exit 1
+          fi
+
+      - uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: proxy
+          secrets: |
+            GEMINI_API_KEY
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+      - name: Health check
+        env:
+          URL: ${{ vars.ASSISTANT_URL }}
+        run: |
+          if [ -z "$URL" ]; then
+            echo "::notice::Set the repository variable ASSISTANT_URL to the workers.dev URL printed above, then re-run the Pages deploy."
+            exit 0
+          fi
+          curl -fsS "$URL/health"

@@ -131,24 +131,27 @@ An ablation isolating how much is genuine thermal signal versus geography: [`doc
 
 ## The Ask tab
 
-Plain-language questions beside the map — "what was detected in the last 24 hours?",
-"most persistent industrial sources", "anything near 23.75, 86.42?" — answered from the
-loaded data. Every answer is **computed** by code over fixed question types
-([`frontend/src/assistant/intents.ts`](frontend/src/assistant/intents.ts)) and lists the
-locations and facts it rests on, each linked to the map.
+Ask anything about the data beside the map. Answers are written by **Google Gemini**,
+which reasons over a briefing of ~75 numbered facts the page computes from the same rows
+the map draws: provenance and freshness, how classification works, the classifier's
+measured precision and recall, totals, recent activity, explicit rankings, where activity
+concentrates, and the full evidence for any open location
+([`briefing.ts`](frontend/src/assistant/briefing.ts)). It returns an answer, an analysis,
+caveats and follow-up questions, and **every sentence cites the facts it rests on** —
+click a citation to see them, and jump to the location on the map.
 
-An optional open-weight model (Qwen3-1.7B, Apache-2.0) can be loaded to word answers
-and understand unusual phrasing. It runs **in the browser** on the visitor's GPU via
-WebGPU: no server, no key, nothing typed leaves the device. It never supplies a value —
-a gate ([`verify.ts`](frontend/src/assistant/verify.ts)) withholds any wording with a
-number, a source type or a name the computed facts do not contain, and shows the
-computed answer instead, saying why. Measured honestly, the gate withholds nearly all of
-this small model's wording — every one of five answers in testing, four of them for
-untrue comparisons, reasons or labels built from true numbers — so its practical value
-is understanding unusual phrasing, not writing the answer.
-The first load downloads ~940 MB and took 6-8 minutes on the development laptop, so it
-is opt-in and the page says so first.
-Decision and measurements: [ADR 0008](docs/adr/0008-on-device-assistant.md).
+Each sentence is checked against *its own* citations
+([`verify.ts`](frontend/src/assistant/verify.ts)): its numbers, names and source types
+must appear in them, comparisons need a cited ranking, causes must be stated in them, and
+certainty words are refused. A sentence that fails is withheld and the reason shown. Asked
+"is there a refinery fire in Gujarat right now?", it withheld its own answer — no fact
+names Gujarat or a refinery — and said so.
+
+The Gemini key lives only in a Cloudflare Worker ([`proxy/`](proxy/README.md)), never in
+the website or the repository. If Gemini is unreachable, an on-device open-weight model
+(Qwen3-1.7B, run in the browser via WebGPU) or the computed answer takes over, and the
+page says which. Decisions and measurements: [ADR 0009](docs/adr/0009-gemini-through-a-proxy.md),
+[ADR 0008](docs/adr/0008-on-device-assistant.md).
 
 ---
 
@@ -222,7 +225,7 @@ Every collection response carries a `provenance` block, and the UI distinguishes
 
 A file is never described as live. "Near real time" is judged from when the file was built, so if the scheduled refresh stops, the page drops back to "Cached snapshot" on its own rather than advertising freshness it no longer has.
 
-Every timestamp shown is the real satellite acquisition time. An earlier version re-dated snapshot detections relative to the current clock so that a frozen demo would not look stale; on a 13-day-old file that showed a 19 September detection as 2 October, after the data window had ended. A regression test now fails if any timestamp falls outside the window the snapshot declares.
+Every timestamp shown is the real satellite acquisition time. An earlier version re-dated snapshot detections relative to the current clock so that an old snapshot would not look stale; on a 13-day-old file that showed a 19 September detection as 2 October, after the data window had ended. A regression test now fails if any timestamp falls outside the window the snapshot declares.
 
 **Coverage is reported, not assumed.** A location whose industrial context has not been surveyed reports `not_surveyed` and is left unclassified. That is deliberately different from "no industry nearby" — treating a gap in our own collection as evidence of absence is the easiest way for a system like this to start lying.
 

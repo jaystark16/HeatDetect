@@ -9,7 +9,7 @@ The design that follows from that:
 
   1. **Disk cache, checked first.** A tile is fetched at most once per query
      version. The cache is committed to the repository, so a fresh clone, a CI
-     run and a live demo need no Overpass access at all.
+     run and the production deploy need no Overpass access at all.
   2. **Only tiles containing detections** are ever requested. Empty ocean and
      empty desert are never queried.
   3. **Backoff and a fallback mirror**, and the run is **resumable** — a

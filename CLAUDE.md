@@ -40,20 +40,23 @@ OSM industrial + landuse (Overpass) ├─► SQLite/Postgres ─► features �
 - `app/evidence.py` — evidence sentences built from real values, via templates.
 - `app/service.py` — data access plus the classification authority rules.
 - `app/main.py` — routing and request validation only.
-- `frontend/src/assistant/` — the Ask tab: intents and answers (deterministic), the
-  wording gate, and the optional in-browser model (WebLLM, Qwen3-1.7B).
+- `frontend/src/assistant/` — the Ask tab: the briefing and computed answers
+  (deterministic), the citation gate, the Gemini client, and the offline in-browser model.
+- `proxy/` — Cloudflare Worker holding the Gemini key; deployed by `assistant.yml`.
 - `app/pipeline.py` — the CLI that runs ingestion, enrichment and feature stages.
 
 **Deterministic logic owns facts.** Distances, persistence, counts, filtering and
 thresholds are code, not model output. The model only estimates a class for a lone
 detection with no history.
 
-**No language model supplies a fact.** The one LLM is the optional on-device
-assistant (`docs/adr/0008-on-device-assistant.md`, narrowing ADR 0007). It may route a
-question to a fixed intent and reword the computed answer; code computes every value
-(`frontend/src/assistant/intents.ts`) and `verify.ts` withholds any wording with a
-number, source type or name the data does not contain. Do not widen its role, and do
-not add another model without a concrete task it does better than a deterministic function.
+**No language model supplies a fact.** The Ask tab uses Google Gemini through a
+key-holding proxy (`proxy/`, ADR 0009), with an on-device model as offline fallback
+(ADR 0008). Code computes every value into a numbered briefing
+(`frontend/src/assistant/briefing.ts`); the model must cite those facts in every
+sentence, and `verify.ts` withholds any sentence whose numbers, names, source types,
+comparisons or causes its cited facts do not support. **No API key may ever be shipped
+to the browser or committed** (CI checks). Do not widen a model's role beyond wording
+and reasoning over computed facts.
 
 ## Empirical facts established by measurement
 

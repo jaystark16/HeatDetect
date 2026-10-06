@@ -31,7 +31,7 @@ services:
     # Returns 200 even in a degraded state (data present but unlabelled, say) so
     # a data problem does not read as an outage. The `status` and `notes` fields
     # carry the detail. Also the endpoint the keep-warm workflow pings, to stop
-    # the free tier spinning down before a demo.
+    # the free tier spinning down before a visitor arrives.
     healthCheckPath: /api/health
 
     envVars:

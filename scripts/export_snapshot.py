@@ -16,7 +16,7 @@ rebuilds it on a schedule, so the page can say exactly how current it is.
 
 Timestamps are the **true acquisition times**. An earlier version stored each
 detection's age at export time and the page rebuilt it as "now minus age", so
-that a frozen demo would not look stale. That shifted every timestamp forward by
+that an old snapshot would not look stale. That shifted every timestamp forward by
 the age of the file: on a 13-day-old snapshot a detection from 19 September was
 displayed as 2 October, after the data window had ended, and "Last 24 hours"
 returned 57 detections that were two weeks old. Never again.

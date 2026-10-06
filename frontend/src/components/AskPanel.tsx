@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { buildBriefing, type Fact } from "../assistant/briefing";
+import { askGemini, GEMINI_CONFIGURED, type GeminiAnswer } from "../assistant/gemini";
 import {
   answer as computeAnswer,
   keywordRoute,
@@ -7,7 +9,7 @@ import {
   type AskContext,
 } from "../assistant/intents";
 import * as llm from "../assistant/llm";
-import { verifyWording } from "../assistant/verify";
+import { verifyWording, type CitedVerdict } from "../assistant/verify";
 import type { MapMark } from "../types";
 
 interface Props {
@@ -24,34 +26,47 @@ type ModelState =
   | { status: "ready" }
   | { status: "error"; message: string };
 
-interface Turn {
+interface GeminiTurn {
+  kind: "gemini";
+  id: number;
+  question: string;
+  result: GeminiAnswer;
+  facts: Fact[];
+}
+
+interface LocalTurn {
+  kind: "local";
   id: number;
   question: string;
   answer: Answer;
   routedBy: "keywords" | "model";
-  /** Model wording that passed the gate; null means the computed answer is shown. */
+  /** On-device wording that passed the gate; null means the computed answer is shown. */
   wording: string | null;
-  /** Why the model's wording was not shown, when it was attempted and failed. */
   rejected: string | null;
+  /** Why Gemini was not used, when it was configured but failed. */
+  geminiFailure: string | null;
   seconds: number;
 }
 
+type Turn = GeminiTurn | LocalTurn;
+
 const SUGGESTIONS = [
+  "Give me an overall analysis of what the data shows",
   "What was detected in the last 24 hours?",
-  "Which industrial sources are the most persistent?",
-  "Where is the strongest heat?",
-  "Give me an overview",
+  "Which industrial sources are the most persistent, and what stands out?",
+  "Where is activity concentrated?",
+  "How far can I trust these classifications?",
   "How current is this data?",
-  "How reliable is the classifier?",
 ];
 
 /**
- * Questions answered from the data, optionally worded by an on-device model.
+ * Questions about the data, answered by Gemini from facts the page computes.
  *
- * Every answer is computed (assistant/intents.ts). The model, when loaded,
- * may choose the question type for unusual phrasing and reword the result;
- * its wording is shown only if assistant/verify.ts finds nothing in it that
- * the data does not support. ADR 0008.
+ * Gemini sees a numbered briefing of the real data and the system's own
+ * analysis, and must cite those numbers in every sentence; each sentence is
+ * checked against its citations and withheld if it does not hold. When Gemini
+ * cannot be reached, the on-device model or the computed answer takes over,
+ * and the page says which. ADR 0008.
  */
 export default function AskPanel({ context, onShow }: Props) {
   const [model, setModel] = useState<ModelState>({ status: "checking" });
@@ -88,19 +103,13 @@ export default function AskPanel({ context, onShow }: Props) {
     }
   }, []);
 
-  const ask = useCallback(
-    async (question: string) => {
-      const q = question.trim();
-      if (!q || !context || busy) return;
-      setBusy(true);
-      setDraft("");
+  /** Computed answer, optionally worded on-device. Used when Gemini is not. */
+  const askLocally = useCallback(
+    async (q: string, ctx: AskContext, geminiFailure: string | null): Promise<LocalTurn> => {
       const started = performance.now();
-      const ready = model.status === "ready";
-
-      // Keywords first: instant, predictable, and right for most phrasings.
-      // The model routes only what keywords cannot place.
-      let intent = keywordRoute(q, context.selected !== null);
-      let routedBy: Turn["routedBy"] = "keywords";
+      const ready = llm.isLoaded();
+      let intent = keywordRoute(q, ctx.selected !== null);
+      let routedBy: LocalTurn["routedBy"] = "keywords";
       if (ready && intent.kind === "unsupported") {
         try {
           const routed = await llm.route(q);
@@ -112,8 +121,7 @@ export default function AskPanel({ context, onShow }: Props) {
           // Keep the keyword route; the answer states what it answered.
         }
       }
-
-      const result = computeAnswer(intent, context);
+      const result = computeAnswer(intent, ctx);
       let wording: string | null = null;
       let rejected: string | null = null;
       if (ready && intent.kind !== "unsupported") {
@@ -128,36 +136,79 @@ export default function AskPanel({ context, onShow }: Props) {
           rejected = "the model failed while writing";
         }
       }
+      return {
+        kind: "local",
+        id: nextId.current++,
+        question: q,
+        answer: result,
+        routedBy,
+        wording,
+        rejected,
+        geminiFailure,
+        seconds: (performance.now() - started) / 1000,
+      };
+    },
+    [],
+  );
 
-      setTurns((t) => [
-        ...t,
-        {
-          id: nextId.current++,
-          question: q,
-          answer: result,
-          routedBy,
-          wording,
-          rejected,
-          seconds: (performance.now() - started) / 1000,
-        },
-      ]);
+  const ask = useCallback(
+    async (question: string) => {
+      const q = question.trim();
+      if (!q || !context || busy) return;
+      setBusy(true);
+      setDraft("");
+
+      let turn: Turn;
+      if (GEMINI_CONFIGURED) {
+        const briefing = buildBriefing(q, context);
+        try {
+          const result = await askGemini(q, briefing);
+          turn = {
+            kind: "gemini",
+            id: nextId.current++,
+            question: q,
+            result,
+            facts: briefing.facts,
+          };
+        } catch (cause) {
+          turn = await askLocally(
+            q,
+            context,
+            cause instanceof Error ? cause.message : "Gemini could not answer.",
+          );
+        }
+      } else {
+        turn = await askLocally(q, context, null);
+      }
+
+      setTurns((t) => [...t, turn]);
       setBusy(false);
     },
-    [busy, context, model.status],
+    [askLocally, busy, context],
   );
 
   const suggestions = context?.selected
-    ? ["Why was the open location classified this way?", ...SUGGESTIONS]
+    ? ["Analyse the open location: why was it classified this way?", ...SUGGESTIONS]
     : SUGGESTIONS;
 
   return (
     <div className="ask">
       <div className="ask__intro">
-        <p>
-          Ask about the data in plain words. Every answer is computed from the loaded
-          detections; nothing is guessed.
-        </p>
-        <ModelCard state={model} onLoad={loadModel} />
+        {GEMINI_CONFIGURED ? (
+          <p>
+            Answers are written by <strong>Google Gemini</strong> from a briefing of numbered
+            facts this page computes from the live data and HeatDetect's own analysis. Every
+            sentence cites the facts it rests on and is checked against them before it is
+            shown. Your question and the briefing are sent to Google's Gemini API through
+            HeatDetect's server.
+          </p>
+        ) : (
+          <p>
+            Ask about the data in plain words. Every answer is computed from the loaded
+            detections; nothing is guessed.
+          </p>
+        )}
+        <ModelCard state={model} onLoad={loadModel} fallbackOnly={GEMINI_CONFIGURED} />
       </div>
 
       <div className="ask__turns">
@@ -177,13 +228,21 @@ export default function AskPanel({ context, onShow }: Props) {
           </div>
         )}
 
-        {turns.map((turn) => (
-          <TurnView key={turn.id} turn={turn} onShow={onShow} />
-        ))}
+        {turns.map((turn) =>
+          turn.kind === "gemini" ? (
+            <GeminiTurnView key={turn.id} turn={turn} onShow={onShow} onAsk={ask} busy={busy} />
+          ) : (
+            <LocalTurnView key={turn.id} turn={turn} onShow={onShow} />
+          ),
+        )}
 
         {busy && (
           <p className="ask__busy">
-            {model.status === "ready" ? "Computing, then wording on this device…" : "Computing…"}
+            {GEMINI_CONFIGURED
+              ? "Gemini is analysing the briefing…"
+              : model.status === "ready"
+                ? "Computing, then wording on this device…"
+                : "Computing…"}
           </p>
         )}
         <div ref={endRef} />
@@ -200,7 +259,7 @@ export default function AskPanel({ context, onShow }: Props) {
           className="ask__input"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder={context ? "e.g. vegetation fires in the last 3 days" : "Loading locations…"}
+          placeholder={context ? "Ask anything about the data" : "Loading locations…"}
           disabled={!context || busy}
           aria-label="Ask a question about the data"
         />
@@ -212,12 +271,21 @@ export default function AskPanel({ context, onShow }: Props) {
   );
 }
 
-function ModelCard({ state, onLoad }: { state: ModelState; onLoad: () => void }) {
+function ModelCard({
+  state,
+  onLoad,
+  fallbackOnly,
+}: {
+  state: ModelState;
+  onLoad: () => void;
+  fallbackOnly: boolean;
+}) {
+  const label = fallbackOnly ? "Offline fallback" : "Optional";
   switch (state.status) {
     case "checking":
       return null;
     case "unsupported":
-      return (
+      return fallbackOnly ? null : (
         <p className="ask__model ask__model--muted">
           The optional on-device model is not available here: {state.reason} Questions still
           work, answered directly from the data.
@@ -225,17 +293,19 @@ function ModelCard({ state, onLoad }: { state: ModelState; onLoad: () => void })
       );
     case "idle":
       return (
-        <div className="ask__model">
+        <details className="ask__model">
+          <summary>
+            <strong>{label}:</strong> an on-device model, if Gemini cannot be reached
+          </summary>
           <p>
-            <strong>Optional:</strong> load {llm.MODEL_NAME} to word answers and understand
-            unusual phrasing. It runs entirely in this browser; nothing you type leaves the
-            device. The first load downloads about {llm.MODEL_DOWNLOAD_MB} MB and can take
+            {llm.MODEL_NAME} runs entirely in this browser and is used only when Gemini is
+            unavailable. The first load downloads about {llm.MODEL_DOWNLOAD_MB} MB and takes
             several minutes.
           </p>
           <button type="button" className="ask__load" onClick={onLoad}>
             Load model ({llm.MODEL_DOWNLOAD_MB} MB)
           </button>
-        </div>
+        </details>
       );
     case "loading":
       return (
@@ -249,13 +319,13 @@ function ModelCard({ state, onLoad }: { state: ModelState; onLoad: () => void })
     case "ready":
       return (
         <p className="ask__model ask__model--ready">
-          ● {llm.MODEL_NAME} is running on this device.
+          ● {llm.MODEL_NAME} is loaded on this device{fallbackOnly ? " as the offline fallback" : ""}.
         </p>
       );
     case "error":
       return (
         <div className="ask__model">
-          <p className="ask__model--error">The model failed to load: {state.message}</p>
+          <p className="ask__model--error">The on-device model failed to load: {state.message}</p>
           <button type="button" className="ask__load" onClick={onLoad}>
             Try again
           </button>
@@ -264,16 +334,182 @@ function ModelCard({ state, onLoad }: { state: ModelState; onLoad: () => void })
   }
 }
 
-function TurnView({ turn, onShow }: { turn: Turn; onShow: (mark: MapMark) => void }) {
-  const { answer } = turn;
+function Citations({
+  cites,
+  facts,
+  onShow,
+}: {
+  cites: number[];
+  facts: Fact[];
+  onShow: (mark: MapMark) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const cited = cites.map((c) => facts.find((f) => f.id === c)).filter((f): f is Fact => Boolean(f));
+  return (
+    <>
+      <button
+        type="button"
+        className={`cite ${open ? "is-open" : ""}`}
+        aria-expanded={open}
+        title="Show the facts this sentence rests on"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {cites.map((c) => `[${c}]`).join("")}
+      </button>
+      {open && (
+        <span className="cite__facts">
+          {cited.map((f) => (
+            <span key={f.id} className="cite__fact">
+              <b>[{f.id}]</b> {f.text}
+              {f.mark && (
+                <button type="button" className="turn__show" onClick={() => onShow(f.mark!)}>
+                  Show
+                </button>
+              )}
+            </span>
+          ))}
+        </span>
+      )}
+    </>
+  );
+}
+
+function Sentences({
+  verdicts,
+  facts,
+  onShow,
+}: {
+  verdicts: CitedVerdict[];
+  facts: Fact[];
+  onShow: (mark: MapMark) => void;
+}) {
+  const passed = verdicts.filter((v) => v.ok);
+  return (
+    <p className="turn__text">
+      {passed.map((v, i) => (
+        <span key={i} className="sentence">
+          {v.sentence.text}{" "}
+          <Citations cites={v.sentence.cites} facts={facts} onShow={onShow} />{" "}
+        </span>
+      ))}
+    </p>
+  );
+}
+
+function GeminiTurnView({
+  turn,
+  onShow,
+  onAsk,
+  busy,
+}: {
+  turn: GeminiTurn;
+  onShow: (mark: MapMark) => void;
+  onAsk: (q: string) => void;
+  busy: boolean;
+}) {
+  const { result, facts } = turn;
+  const answerShown = result.answer.some((v) => v.ok);
+  const withheld = [...result.answer, ...result.analysis, ...result.caveats].filter((v) => !v.ok);
+  const fellBack = result.tried.length > 0;
+
   return (
     <div className="turn">
       <p className="turn__question">{turn.question}</p>
       <div className="turn__answer">
         <p className="turn__routed">
+          <strong>Gemini</strong>
+          <span className="turn__meta">
+            {" "}· {result.model} · {result.seconds.toFixed(1)} s
+            {fellBack && ` · ${result.tried.length} busier model${result.tried.length === 1 ? "" : "s"} skipped`}
+          </span>
+        </p>
+
+        {answerShown ? (
+          <Sentences verdicts={result.answer} facts={facts} onShow={onShow} />
+        ) : (
+          // No substitute answer: a computed answer to a keyword reading of the
+          // question can be about something else entirely ("refinery fire in
+          // Gujarat" read as "most persistent industrial sources").
+          <p className="turn__fallback">
+            Gemini's direct answer was withheld because it went beyond what the data
+            establishes
+            {result.answer[0]?.reason ? `: ${result.answer[0].reason}` : ""}. It names mapped facilities
+            only for the location open in the side panel and has no state or district
+            boundaries; it can show locations by coordinates, class, persistence and heat.
+          </p>
+        )}
+
+        {result.analysis.some((v) => v.ok) && (
+          <>
+            <h4 className="turn__heading">Analysis</h4>
+            <Sentences verdicts={result.analysis} facts={facts} onShow={onShow} />
+          </>
+        )}
+
+        {result.caveats.some((v) => v.ok) && (
+          <>
+            <h4 className="turn__heading">Caveats</h4>
+            <Sentences verdicts={result.caveats} facts={facts} onShow={onShow} />
+          </>
+        )}
+
+        <p className="turn__badge turn__badge--model">
+          Every sentence shown cites the facts it rests on and was checked against them.
+          {withheld.length > 0 &&
+            ` ${withheld.length} sentence${withheld.length === 1 ? " was" : "s were"} withheld.`}
+        </p>
+
+        {withheld.length > 0 && (
+          <details className="turn__facts">
+            <summary>Why {withheld.length === 1 ? "a sentence was" : "sentences were"} withheld</summary>
+            <ul>
+              {withheld.map((v, i) => (
+                <li key={i}>{v.reason}</li>
+              ))}
+            </ul>
+          </details>
+        )}
+
+        {result.followUps.length > 0 && (
+          <div className="ask__suggestions turn__follow">
+            {result.followUps.map((q) => (
+              <button type="button" key={q} className="ask__chip" disabled={busy} onClick={() => onAsk(q)}>
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <details className="turn__facts">
+          <summary>The briefing Gemini was given ({facts.length} facts)</summary>
+          <ul>
+            {facts.map((f) => (
+              <li key={f.id}>
+                <b>[{f.id}]</b> {f.text}
+              </li>
+            ))}
+          </ul>
+        </details>
+      </div>
+    </div>
+  );
+}
+
+function LocalTurnView({ turn, onShow }: { turn: LocalTurn; onShow: (mark: MapMark) => void }) {
+  const { answer } = turn;
+  return (
+    <div className="turn">
+      <p className="turn__question">{turn.question}</p>
+      <div className="turn__answer">
+        {turn.geminiFailure && (
+          <p className="turn__fallback">
+            Gemini was not used: {turn.geminiFailure} Answered from the data instead.
+          </p>
+        )}
+        <p className="turn__routed">
           Answered: <strong>{answer.title}</strong>
           <span className="turn__meta">
-            {" "}· understood by {turn.routedBy === "model" ? "the model" : "keywords"} ·{" "}
+            {" "}· understood by {turn.routedBy === "model" ? "the on-device model" : "keywords"} ·{" "}
             {turn.seconds.toFixed(1)} s
           </span>
         </p>
@@ -306,8 +542,8 @@ function TurnView({ turn, onShow }: { turn: Turn; onShow: (mark: MapMark) => voi
           <details className="turn__facts">
             <summary>What this answer is based on ({answer.facts.length})</summary>
             <ul>
-              {answer.facts.map((f) => (
-                <li key={f}>{f}</li>
+              {answer.facts.map((f, i) => (
+                <li key={i}>{f}</li>
               ))}
             </ul>
           </details>

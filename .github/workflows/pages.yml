@@ -131,6 +131,10 @@ jobs:
           # Repository variable, empty until a hosted API exists. While empty
           # the dashboard serves the snapshot built above and makes no API calls.
           VITE_API_BASE: ${{ vars.API_BASE_URL }}
+          # Public URL of the assistant proxy (proxy/worker.mjs). Not a secret:
+          # the Gemini key stays in the Worker. Unset, the Ask tab answers from
+          # the data without Gemini.
+          VITE_ASSISTANT_URL: ${{ vars.ASSISTANT_URL }}
         run: npm run build
 
       - uses: actions/configure-pages@v5

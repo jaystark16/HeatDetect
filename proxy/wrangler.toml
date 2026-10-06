@@ -1,0 +1,8 @@
+name = "heatdetect-assistant"
+main = "worker.mjs"
+compatibility_date = "2026-10-01"
+
+[vars]
+# The production dashboard and local development. Requests from anywhere else
+# are refused. The Gemini key is a secret: `npx wrangler secret put GEMINI_API_KEY`.
+ALLOWED_ORIGINS = "https://jaystark16.github.io,http://localhost:5173,http://localhost:4173"

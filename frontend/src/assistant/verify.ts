@@ -171,3 +171,100 @@ export function verifyWording(text: string, answer: Answer, question: string): V
 
   return { ok: true };
 }
+
+// ------------------------------------------------------ cited sentences --
+//
+// Gemini answers in sentences that each name the facts they rest on. Each one
+// is checked against *its own* citations, which is stricter than checking
+// against the whole briefing: a true number cited to the wrong fact fails.
+
+export interface CitedSentence {
+  text: string;
+  cites: number[];
+}
+
+export interface CitedVerdict {
+  sentence: CitedSentence;
+  ok: boolean;
+  reason?: string;
+}
+
+interface CitableFact {
+  id: number;
+  text: string;
+}
+
+/** Hedges are how this project speaks; strong causal claims need a cited basis. */
+const STRONG_CAUSAL =
+  /\b(because|caused by|due to|as a result|result of|therefore|thus|hence|owing to|driven by|proves?|proven)\b/gi;
+
+/** A comparison needs a cited ranking ("#1 …") or the same word in a cited fact. */
+function comparisonSupported(word: string, cited: string): boolean {
+  return /#\d+/.test(cited) || new RegExp(`\b${word}\b`, "i").test(cited);
+}
+
+export function verifyCited(
+  sentence: CitedSentence,
+  facts: CitableFact[],
+  question: string,
+): CitedVerdict {
+  const fail = (reason: string): CitedVerdict => ({ sentence, ok: false, reason });
+  const text = (sentence.text ?? "").trim();
+  if (!text) return fail("it was empty");
+  if (text.length > 600) return fail("it ran too long");
+  if (LIST_LINE.test(text)) return fail("it was formatted as a list");
+
+  const byId = new Map(facts.map((f) => [f.id, f.text]));
+  const cites = [...new Set((sentence.cites ?? []).filter((c) => Number.isInteger(c)))];
+  if (cites.length === 0) return fail("it cited no fact");
+  const unknown = cites.filter((c) => !byId.has(c));
+  if (unknown.length) return fail(`it cited facts that do not exist (${unknown.join(", ")})`);
+  const cited = cites.map((c) => byId.get(c)!).join(" ");
+
+  const certainty = text.match(CERTAINTY);
+  if (certainty) return fail(`it claimed certainty ("${certainty[0]}") the data cannot support`);
+
+  const allowed = numbersIn(`${cited} ${question}`).map(Number).filter(Number.isFinite);
+  // Citation markers like "[3]" inside the text are references, not claims.
+  const claimed = numbersIn(text.replace(/\[\d+(?:\s*,\s*\d+)*\]/g, " "));
+  const unsupported = claimed.filter((x) => !supported(x, allowed));
+  if (unsupported.length) {
+    return fail(`it stated ${unsupported.slice(0, 3).join(", ")}, which its cited facts do not contain`);
+  }
+
+  const lowerCited = cited.toLowerCase();
+  const types = [...new Set((text.match(TYPE_WORDS) ?? []).map((w) => w.toLowerCase()))].filter(
+    (w) => !lowerCited.includes(w),
+  );
+  if (types.length) return fail(`it described a source as something its cited facts do not (${types.join(", ")})`);
+
+  const comparisons = [...new Set((text.match(COMPARATIVE) ?? []).map((w) => w.toLowerCase()))].filter(
+    (w) => !comparisonSupported(w, cited),
+  );
+  if (comparisons.length) {
+    return fail(`it made a comparison (${comparisons.join(", ")}) that no cited ranking supports`);
+  }
+
+  const causal = [...new Set((text.match(STRONG_CAUSAL) ?? []).map((w) => w.toLowerCase()))].filter(
+    (w) => !new RegExp(`\b${w}\b`, "i").test(cited),
+  );
+  if (causal.length) return fail(`it asserted a cause (${causal.join(", ")}) its cited facts do not state`);
+
+  const names = midSentenceProperNouns(text).filter((w) => !ALWAYS_ALLOWED.has(w) && !cited.includes(w));
+  if (names.length) return fail(`it named something its cited facts do not (${[...new Set(names)].join(", ")})`);
+
+  return { sentence: { text, cites }, ok: true };
+}
+
+/**
+ * Suggested follow-up questions are not claims, but they are shown as
+ * clickable text, so they get the same number and name checks against the
+ * whole briefing.
+ */
+export function verifyFollowUp(question: string, facts: CitableFact[]): boolean {
+  const all = facts.map((f) => f.text).join(" ");
+  const allowed = numbersIn(all).map(Number);
+  if (numbersIn(question).some((x) => !supported(x, allowed))) return false;
+  if (CERTAINTY.test(question)) return false;
+  return midSentenceProperNouns(question).every((w) => ALWAYS_ALLOWED.has(w) || all.includes(w));
+}

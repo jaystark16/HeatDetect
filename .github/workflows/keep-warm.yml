@@ -1,7 +1,7 @@
 name: Keep API warm
 
 # Render's free tier spins a service down when idle, and the first request after
-# that can take most of a minute. A judge clicking the demo link and seeing a
+# that can take most of a minute. A visitor opening the site and seeing a
 # blank page for 50 seconds is a real way to lose marks, so this pings the health
 # endpoint often enough to keep the instance up.
 #
