@@ -59,7 +59,10 @@ interface Snapshot {
   model: ModelInfo;
   datasets: DatasetInfo[];
   locations: LocationSummary[];
+  /** Inlined for a subset, so a checkout without the detail files still works. */
   details: Record<string, HotspotDetail>;
+  /** One file per location, built alongside the snapshot; null if not built. */
+  detail_files?: { count: number; path: string } | null;
 }
 
 let cached: Snapshot | null = null;
@@ -131,6 +134,7 @@ export interface SnapshotFreshness {
 export interface FallbackMeta extends SnapshotFreshness {
   coverageNote: string;
   note: string;
+  /** Locations whose full detail can be opened from this build. */
   detailCount: number;
   locationCount: number;
 }
@@ -160,7 +164,7 @@ export async function fallbackMeta(): Promise<FallbackMeta> {
     ...freshness(snapshot),
     coverageNote: snapshot.coverage_note,
     note: snapshot.note,
-    detailCount: Object.keys(snapshot.details).length,
+    detailCount: snapshot.detail_files?.count ?? Object.keys(snapshot.details).length,
     locationCount: snapshot.locations.length,
   };
 }
@@ -226,14 +230,34 @@ export async function fallbackDatasets(): Promise<DatasetInfo[]> {
   return (await load()).datasets;
 }
 
+/** Detection ids are SHA-1 hex; anything else is not ours to put in a URL. */
+const DETECTION_ID = /^[0-9a-f]{40}$/;
+
 /**
- * Detail for one detection, if the snapshot carries it.
+ * Detail for one location, from the build that produced this snapshot.
  *
- * Only a class-balanced subset of locations has full detail, to keep the file
- * reasonable. Returning null lets the UI say so plainly instead of rendering a
- * half-empty panel that looks like missing data.
+ * Each location's detail is its own small file, fetched only when clicked, so
+ * every mark opens real evidence without the page downloading 60 MiB up front.
+ * Resolves to null when this build has no detail for it, which the UI states
+ * plainly rather than rendering a half-empty panel.
  */
 export async function fallbackDetail(id: string): Promise<HotspotDetail | null> {
   const snapshot = await load();
-  return snapshot.details[id] ?? null;
+  const inlined = snapshot.details[id];
+  if (inlined) return inlined;
+
+  const files = snapshot.detail_files;
+  if (!files || !DETECTION_ID.test(id)) return null;
+
+  const url =
+    import.meta.env.BASE_URL +
+    files.path.replace("{prefix}", id.slice(0, 2)).replace("{id}", id);
+  // Revalidated, not blindly cached: the scheduled build replaces these files.
+  const response = await fetch(url, { cache: "no-cache" });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`Detail unavailable (HTTP ${response.status})`);
+
+  const detail = (await response.json()) as HotspotDetail;
+  // A file that answers for a different detection is a build fault, not data.
+  return detail.id === id ? detail : null;
 }

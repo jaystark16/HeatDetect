@@ -43,6 +43,7 @@ export default function App() {
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailUnavailable, setDetailUnavailable] = useState(false);
   const [detailFromSnapshot, setDetailFromSnapshot] = useState(false);
+  const [detailError, setDetailError] = useState<string | null>(null);
 
   const [focus, setFocus] = useState<FocusTarget | null>(null);
   const [loading, setLoading] = useState(true);
@@ -102,6 +103,7 @@ export default function App() {
     setSelected(hotspot);
     setDetail(null);
     setDetailUnavailable(false);
+    setDetailError(null);
     setDetailLoading(true);
     try {
       const result = await api.detail(hotspot.id);
@@ -109,6 +111,11 @@ export default function App() {
       setDetail(result.data);
       setDetailUnavailable(result.data === null);
       setDetailFromSnapshot(result.fromSnapshot);
+    } catch (cause) {
+      if (token !== detailRequest.current) return;
+      setDetailError(
+        cause instanceof Error ? cause.message : "The detail could not be loaded.",
+      );
     } finally {
       if (token === detailRequest.current) setDetailLoading(false);
     }
@@ -136,6 +143,7 @@ export default function App() {
     setDetail(null);
     setDetailLoading(false);
     setDetailUnavailable(false);
+    setDetailError(null);
   }, []);
 
   // The nonce makes repeat picks of the same result re-trigger the fly-to.
@@ -227,6 +235,7 @@ export default function App() {
               loading={detailLoading}
               fromSnapshot={detailFromSnapshot}
               unavailable={detailUnavailable}
+              error={detailError}
               onBack={handleBack}
             />
           ) : (
@@ -261,7 +270,9 @@ export default function App() {
                   >
                     {!API_CONFIGURED && mode === "near_real_time" &&
                       `Static deployment, rebuilt from NASA FIRMS every ${snapshot.cadenceHours} h. ` +
-                        "Search, and full detail for every location, need the API."}
+                        (snapshot.detailCount >= snapshot.locationCount
+                          ? "Every location opens its full evidence; search needs the API."
+                          : "Search, and full detail for every location, need the API.")}
                     {/* Current-ness is judged from the newest detection, with the
                         same 48-hour line the API uses. A one-off build made minutes ago
                         holds today's data; calling it "not current" was wrong. */}

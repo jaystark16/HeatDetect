@@ -7,6 +7,8 @@ interface Props {
   fromSnapshot: boolean;
   /** Set when neither the API nor the snapshot had detail for this selection. */
   unavailable: boolean;
+  /** Set when fetching the detail failed — distinct from it not existing. */
+  error: string | null;
   onBack: () => void;
 }
 
@@ -26,6 +28,7 @@ export default function DetailPanel({
   loading,
   fromSnapshot,
   unavailable,
+  error,
   onBack,
 }: Props) {
   const back = (
@@ -43,15 +46,30 @@ export default function DetailPanel({
     );
   }
 
+  if (error) {
+    return (
+      <div className="detail">
+        {back}
+        <h2 className="detail__label">Detail could not be loaded</h2>
+        <p className="detail__absent">
+          {error} This is a failed download, not an absence of evidence. Check
+          the connection and select the location again.
+        </p>
+      </div>
+    );
+  }
+
   if (unavailable) {
     return (
       <div className="detail">
         {back}
         <h2 className="detail__label">Detail unavailable</h2>
         <p className="detail__empty">
-          This view is served from a snapshot file, which carries full evidence
-          for a class-balanced subset of locations to stay small. Select another
-          mark, or run the API to see detail for any detection.
+          This build of the snapshot has no stored evidence for this location,
+          either because it was exported without per-location detail or because
+          the file could not be found. Nothing is shown rather than a partial
+          panel. Select another mark, or run the API to see detail for any
+          detection.
         </p>
       </div>
     );

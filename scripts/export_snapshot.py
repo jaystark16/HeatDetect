@@ -21,6 +21,14 @@ the age of the file: on a 13-day-old snapshot a detection from 19 September was
 displayed as 2 October, after the data window had ended, and "Last 24 hours"
 returned 57 detections that were two weeks old. Never again.
 
+Full detail for **every** location is written as one small file each under
+`frontend/public/details/<first two hex>/<detection id>.json`, fetched only
+when that location is clicked. The snapshot also inlines detail for a few
+hundred locations, so a checkout without the (untracked) files still works.
+
+    --no-detail-files   skip the per-location files (~8 min, ~60 MiB) for a
+                        quick local export
+
 Environment:
   SNAPSHOT_REFRESH_HOURS  set by the scheduled Pages workflow to its cadence.
                           Unset means a manual, one-off build.
@@ -29,8 +37,10 @@ Environment:
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
+import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,6 +64,11 @@ from app.service import (  # noqa: E402
 # served gzipped by the CDN and fetched only when the API cannot be reached.
 OUT = ROOT / "frontend" / "public" / "snapshot.json"
 
+# Generated per build and never committed: ~18,000 files of ~3 KiB.
+DETAIL_DIR = ROOT / "frontend" / "public" / "details"
+# Mirrored in frontend/src/fallback/index.ts.
+DETAIL_PATH = "details/{prefix}/{id}.json"
+
 # Every location is exported: one row per ~1 km cell, exactly what
 # `/api/locations` serves, so the offline map is the whole picture rather than
 # a sample. ~5 MiB raw, ~1 MiB as served gzipped.
@@ -73,7 +88,47 @@ CLASSES = ("industrial_fire", "persistent_industrial", "natural_fire", "unknown"
 NO_LIMIT = 10_000_000
 
 
+def detail_file(detection_id: str) -> Path:
+    return DETAIL_DIR / detection_id[:2] / f"{detection_id}.json"
+
+
+def write_detail_files(engine, trained, marks) -> int:
+    """One file per location, so every mark on the map opens real evidence.
+
+    The same `get_hotspot_detail` the API serves, so a file and an API
+    response for the same location are identical.
+    """
+    # Generated output: rebuilt whole, so a location that has dropped out of
+    # the window cannot leave a stale file behind.
+    if DETAIL_DIR.exists():
+        shutil.rmtree(DETAIL_DIR)
+
+    written = 0
+    for i, mark in enumerate(marks, start=1):
+        detection_id = mark.representative_detection_id
+        detail = get_hotspot_detail(engine, detection_id, trained)
+        if detail is None:
+            continue
+        path = detail_file(detection_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(detail.model_dump_json(), encoding="utf-8")
+        written += 1
+        if i % 2000 == 0:
+            print(f"  detail files: {i} of {len(marks)}", flush=True)
+    return written
+
+
 def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Export the static snapshot the dashboard serves."
+    )
+    parser.add_argument(
+        "--no-detail-files",
+        action="store_true",
+        help="skip per-location detail files for a quick local export",
+    )
+    args = parser.parse_args()
+
     engine = build_engine()
     trained = ml.load()
 
@@ -130,6 +185,20 @@ def main() -> int:
             continue
         details[detection_id] = json.loads(detail.model_dump_json())
 
+    detail_files = 0
+    if not args.no_detail_files:
+        detail_files = write_detail_files(engine, trained, marks)
+        if detail_files != len(marks):
+            print(
+                f"Refusing to publish: detail written for {detail_files} of "
+                f"{len(marks)} locations.",
+                file=sys.stderr,
+            )
+            return 1
+    elif DETAIL_DIR.exists():
+        # Files from an earlier build would not match this snapshot.
+        shutil.rmtree(DETAIL_DIR)
+
     # Whether anything rebuilds this file. The page uses this, together with
     # `generated_at`, to decide between "near real time" and "cached snapshot",
     # so a scheduled build that silently stops degrades to the honest label on
@@ -175,6 +244,11 @@ def main() -> int:
         "datasets": [json.loads(d.model_dump_json()) for d in get_datasets()],
         "locations": locations,
         "details": details,
+        # Null when the per-location files were not built; the page then
+        # offers detail only for the inlined subset, and says so.
+        "detail_files": (
+            {"count": detail_files, "path": DETAIL_PATH} if detail_files else None
+        ),
     }
 
     OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -188,6 +262,8 @@ def main() -> int:
         f"Wrote {len(locations)} locations and {len(details)} details "
         f"to {OUT.relative_to(ROOT)} ({size_kb:.0f} KiB)"
     )
+    if detail_files:
+        print(f"  detail files: {detail_files} under {DETAIL_DIR.relative_to(ROOT)}")
     print(f"  window: {snapshot['captured_window']}")
     print(f"  coverage: {collection.provenance.coverage_note}")
     return 0

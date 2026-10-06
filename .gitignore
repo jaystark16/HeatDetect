@@ -47,3 +47,4 @@ Thumbs.db
 
 # Browser-automation screenshots and logs
 .playwright-mcp/
+frontend/public/details/

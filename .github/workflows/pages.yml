@@ -47,7 +47,8 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The per-location detail files take ~8 minutes to export.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
 
@@ -88,6 +89,11 @@ jobs:
           python -m app.pipeline status
           python ../scripts/export_snapshot.py
 
+          # The snapshot's honesty invariants, run on the files about to be
+          # published. A failure here means nothing is deployed.
+          pip install --quiet "pytest==8.4.2"
+          python -m pytest -q tests/test_snapshot_invariants.py
+
       - name: Report what was built
         if: steps.refresh.outcome == 'success'
         run: |
@@ -100,7 +106,8 @@ jobs:
           print(f"window   : {s['captured_window']['oldest_detection_at']} -> {newest.isoformat()}")
           print(f"newest   : {age:.1f} h ago")
           print(f"refresh  : {s['refresh']}")
-          print(f"locations: {len(s['locations'])} of {s['total_locations']}, {len(s['details'])} with detail")
+          print(f"locations: {len(s['locations'])} of {s['total_locations']}, {len(s['details'])} inlined detail")
+          print(f"detail files: {s['detail_files']}")
           PY
 
       - name: Fell back to the committed snapshot

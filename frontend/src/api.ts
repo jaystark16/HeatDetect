@@ -214,14 +214,18 @@ export const api = {
   /**
    * Detail for one detection.
    *
-   * Resolves to null when neither source has it — the snapshot only carries
-   * full detail for the most significant locations, and the UI states that
-   * rather than rendering an empty panel.
+   * Resolves to null when neither source has it — a snapshot exported
+   * without per-location files carries detail for only a subset — and the UI
+   * states that rather than rendering an empty panel.
+   *
+   * A failed download rejects instead. Turning it into null would tell the
+   * user this location has no evidence, when the truth is that it could not
+   * be fetched.
    */
   detail: async (id: string): Promise<Loaded<HotspotDetail | null>> => {
     if (!API_CONFIGURED) {
       const [data, snapshot] = await Promise.all([
-        fallbackDetail(id).catch(() => null),
+        fallbackDetail(id),
         fallbackMeta().catch(() => null),
       ]);
       return { data, fromSnapshot: true, snapshot };
@@ -234,7 +238,7 @@ export const api = {
       };
     } catch {
       const [data, snapshot] = await Promise.all([
-        fallbackDetail(id).catch(() => null),
+        fallbackDetail(id),
         fallbackMeta().catch(() => null),
       ]);
       return { data, fromSnapshot: true, snapshot };

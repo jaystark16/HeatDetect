@@ -22,7 +22,8 @@ from pathlib import Path
 
 import pytest
 
-SNAPSHOT = Path(__file__).resolve().parent.parent.parent / "frontend" / "public" / "snapshot.json"
+PUBLIC = Path(__file__).resolve().parent.parent.parent / "frontend" / "public"
+SNAPSHOT = PUBLIC / "snapshot.json"
 
 ALL_CLASSES = {
     "industrial_fire",
@@ -123,6 +124,54 @@ def test_the_most_persistent_locations_have_detail(snapshot):
         if loc["representative_detection_id"] not in snapshot["details"]
     ]
     assert not missing, f"{len(missing)} of the 20 most persistent have no detail"
+
+
+@pytest.fixture(scope="module")
+def detail_files(snapshot) -> dict[str, Path]:
+    """Per-location detail files, keyed by detection id. Skips when not built.
+
+    They are generated per build and not committed, so a plain checkout has
+    none; the deploy workflow builds them before publishing.
+    """
+    declared = snapshot.get("detail_files")
+    if not declared:
+        pytest.skip("snapshot exported without per-location detail files")
+    root = PUBLIC / "details"
+    if not root.exists():
+        pytest.skip("detail files declared but not present in this checkout")
+    return {p.stem: p for p in root.glob("*/*.json")}
+
+
+def test_every_location_has_a_detail_file(snapshot, detail_files):
+    """Regression: only 300 of ~18,000 locations opened their evidence; the
+    rest said "detail unavailable"."""
+    assert snapshot["detail_files"]["count"] == len(snapshot["locations"])
+    missing = [
+        loc["cell_id"]
+        for loc in snapshot["locations"]
+        if loc["representative_detection_id"] not in detail_files
+    ]
+    assert not missing, f"{len(missing)} locations have no detail file"
+
+
+def test_no_stale_detail_files(snapshot, detail_files):
+    """A file for a location no longer on the map would be unreachable and
+    could describe data the snapshot no longer contains."""
+    opened = {loc["representative_detection_id"] for loc in snapshot["locations"]}
+    stale = set(detail_files) - opened
+    assert not stale, f"{len(stale)} detail files belong to no current location"
+
+
+def test_detail_files_hold_the_same_honesty_invariants(snapshot, detail_files):
+    """Every 50th file, checked like the inlined details."""
+    for detection_id in sorted(detail_files)[::50]:
+        detail = json.loads(detail_files[detection_id].read_text(encoding="utf-8"))
+        assert detail["id"] == detection_id, "file answers for another detection"
+        cls = detail["classification"]
+        if cls["source"] == "rule":
+            assert cls["confidence"] is None, f"{detection_id}: rule with a probability"
+        assert detail["evidence"], f"{detection_id} has no evidence"
+        assert "not proof" in detail["caution"]
 
 
 def test_no_rule_classification_carries_a_probability(snapshot):
