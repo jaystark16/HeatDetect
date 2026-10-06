@@ -4,11 +4,12 @@ import { API_CONFIGURED, api } from "./api";
 import { formatAge } from "./components/ProvenanceBar";
 import type { FallbackMeta } from "./fallback";
 import DetailPanel from "./components/DetailPanel";
-import FilterPanel from "./components/FilterPanel";
+import FilterPanel, { windowDays } from "./components/FilterPanel";
+import LocationFeed from "./components/LocationFeed";
+import { BigCount, MapLegend, RegionChip } from "./components/MapOverlays";
 import MapView, { type FocusTarget } from "./components/MapView";
 import SearchBox from "./components/SearchBox";
 import ProvenanceBar from "./components/ProvenanceBar";
-import StatsBar from "./components/StatsBar";
 import type {
   Analytics,
   DataMode,
@@ -113,6 +114,30 @@ export default function App() {
     }
   }, []);
 
+  const handleFeedPick = useCallback(
+    (mark: MapMark) => {
+      setFocus({
+        latitude: mark.latitude,
+        longitude: mark.longitude,
+        nonce: Date.now(),
+        // Regional rather than street level: enough to see the site and what
+        // surrounds it, which is what makes an industrial source legible.
+        zoom: 10,
+      });
+      void handleSelect(mark);
+    },
+    [handleSelect],
+  );
+
+  const handleBack = useCallback(() => {
+    // Invalidate any in-flight detail so it cannot reopen the panel.
+    detailRequest.current += 1;
+    setSelected(null);
+    setDetail(null);
+    setDetailLoading(false);
+    setDetailUnavailable(false);
+  }, []);
+
   // The nonce makes repeat picks of the same result re-trigger the fly-to.
   const handleSearchPick = useCallback((match: SearchMatch) => {
     setFocus({
@@ -140,17 +165,26 @@ export default function App() {
     : null;
 
   const hotspots = marks ?? [];
-  // /api/locations returns every matching cell, so the map is complete.
-  // Only the cached snapshot is ever a subset.
-  const truncated = fromSnapshot && totalMatching > hotspots.length;
+  // Both sources return every matching location, up to the API's response
+  // limit. Should a filter ever match more than that, the map says so rather
+  // than presenting a cut-off set as complete.
+  const truncated = totalMatching > hotspots.length;
+
+  const byClass = new Map(analytics?.by_class.map((c) => [c.label, c.cells]) ?? []);
+  const flagged = analytics?.flagged_for_investigation ?? 0;
 
   return (
     <div className="app">
       <header className="topbar">
-        <span className="topbar__brand">HeatDetect</span>
-        <span className="topbar__sub topbar__sub--tagline">
-          Industrial fire &amp; persistent thermal source classification
-        </span>
+        <div className="brand">
+          <div className="brand__tile" aria-hidden="true">
+            <FlameIcon />
+          </div>
+          <div className="brand__text">
+            <h1 className="brand__name">HeatDetect</h1>
+            <p className="brand__sub">India thermal source monitor</p>
+          </div>
+        </div>
         <span className="topbar__spacer" />
         {/* Search needs the facilities table, which the cached snapshot does
             not carry, so it is disabled with an explanation when offline. */}
@@ -164,93 +198,174 @@ export default function App() {
         />
       </header>
 
-      <FilterPanel filters={filters} analytics={analytics} onChange={setFilters} />
+      <main className="workspace">
+        <section className="map" aria-label="Map of thermal anomaly locations">
+          <MapView
+            hotspots={hotspots}
+            selectedId={selected?.id ?? null}
+            onSelect={handleSelect}
+            focus={focus}
+          />
 
-      <div className="map">
-        <div className="map__notices">
-          {loading && !marks && (
-            <div className="map__notice map__notice--info">
-              {API_CONFIGURED
-                ? "Loading detections… if the API has been idle it may be starting up, which can take up to a minute."
-                : "Loading detections…"}
-            </div>
+          <MapLegend
+            analytics={analytics}
+            active={filters.label}
+            onToggle={(label) => setFilters((f) => ({ ...f, label }))}
+          />
+
+          <RegionChip
+            detections={analytics?.total_detections ?? null}
+            days={windowDays(provenance)}
+          />
+          {marks && <BigCount value={hotspots.length} label="Locations on map" />}
+        </section>
+
+        <aside className="feed" aria-label={selected ? "Location detail" : "Location feed"}>
+          {selected ? (
+            <DetailPanel
+              detail={detail}
+              loading={detailLoading}
+              fromSnapshot={detailFromSnapshot}
+              unavailable={detailUnavailable}
+              onBack={handleBack}
+            />
+          ) : (
+            <>
+              <div className="feed__head">
+                <div className="feed__title-row">
+                  <h2 className="feed__title">Thermal source feed</h2>
+                  <span className="feed__sort">by days seen</span>
+                </div>
+                <FilterPanel filters={filters} analytics={analytics} onChange={setFilters} />
+              </div>
+
+              <div className="notices">
+                {loading && !marks && (
+                  <div className="notice notice--info">
+                    {API_CONFIGURED
+                      ? "Loading detections… if the API has been idle it may be starting up, which can take up to a minute."
+                      : "Loading detections…"}
+                  </div>
+                )}
+
+                {error && <div className="notice notice--error">{error}</div>}
+
+                {/* Worded for what actually happened. A static deployment has no API
+                    by design; telling its visitors "API unreachable" described a
+                    failure that was not occurring. */}
+                {fromSnapshot && !error && snapshot && (
+                  <div
+                    className={`notice ${
+                      mode === "near_real_time" ? "notice--info" : ""
+                    }`}
+                  >
+                    {!API_CONFIGURED && mode === "near_real_time" &&
+                      `Static deployment, rebuilt from NASA FIRMS every ${snapshot.cadenceHours} h. ` +
+                        "Search, and full detail for every location, need the API."}
+                    {/* Current-ness is judged from the newest detection, with the
+                        same 48-hour line the API uses. A one-off build made minutes ago
+                        holds today's data; calling it "not current" was wrong. */}
+                    {!API_CONFIGURED && mode !== "near_real_time" &&
+                      (snapshot.scheduled
+                        ? `Scheduled refresh has fallen behind: this data was last rebuilt ${formatAge(snapshot.buildAgeHours)} ago.`
+                        : `One-off build from ${formatAge(snapshot.buildAgeHours)} ago that does not refresh itself` +
+                          (snapshot.newestAgeHours != null && snapshot.newestAgeHours > 48
+                            ? `; its newest detection is ${formatAge(snapshot.newestAgeHours)} old, so it is no longer current.`
+                            : "."))}
+                    {API_CONFIGURED &&
+                      `API unreachable — showing the last snapshot, built ${builtOn}` +
+                        (snapshot.newestAgeHours != null && snapshot.newestAgeHours > 48
+                          ? `; its newest detection is ${formatAge(snapshot.newestAgeHours)} old.`
+                          : ".")}
+                  </div>
+                )}
+
+                {!loading && marks && hotspots.length === 0 && !error && (
+                  <div className="notice">
+                    {fromSnapshot &&
+                    filters.withinHours !== "all" &&
+                    snapshot?.newestAgeHours != null &&
+                    snapshot.newestAgeHours > filters.withinHours
+                      ? `No detections in the last ${filters.withinHours} hours. The newest detection in this data is from ${newestOn}, ${formatAge(snapshot.newestAgeHours)} ago.`
+                      : "No detections match these filters. Narrow time ranges can legitimately be empty."}
+                  </div>
+                )}
+
+                {/* Saying so is the difference between a readable map and a
+                    misleading one. */}
+                {!loading && truncated && !error && (
+                  <div className="notice notice--info">
+                    Showing {hotspots.length.toLocaleString()} of{" "}
+                    {totalMatching.toLocaleString()} matching locations, the most
+                    persistent first; the response limit cut off the rest. Totals in
+                    the legend and tiles are for the full set.
+                  </div>
+                )}
+              </div>
+
+              {analytics && (
+                <div className="tiles" aria-label="Totals across all ingested data">
+                  <Tile
+                    value={byClass.get("industrial_fire") ?? 0}
+                    label="Possible industrial fires"
+                    tone="industrial_fire"
+                  />
+                  <Tile
+                    value={byClass.get("persistent_industrial") ?? 0}
+                    label="Persistent sources"
+                    tone="persistent_industrial"
+                  />
+                  <Tile
+                    value={flagged}
+                    label={flagged > 0 ? "⚠ Flagged for review" : "Flagged for review"}
+                  />
+                  <p className="tiles__note">
+                    Locations across all ingested data, independent of the filters above.
+                  </p>
+                </div>
+              )}
+
+              <div className="feed__body">
+                {marks && (
+                  <LocationFeed
+                    marks={hotspots}
+                    selectedId={null}
+                    onSelect={handleFeedPick}
+                  />
+                )}
+              </div>
+            </>
           )}
-
-          {error && <div className="map__notice map__notice--error">{error}</div>}
-
-          {/* Worded for what actually happened. A static deployment has no API
-              by design; telling its visitors "API unreachable" described a
-              failure that was not occurring. */}
-          {fromSnapshot && !error && snapshot && (
-            <div
-              className={`map__notice ${
-                mode === "near_real_time" ? "map__notice--info" : ""
-              }`}
-            >
-              {!API_CONFIGURED && mode === "near_real_time" &&
-                `Static deployment, rebuilt from NASA FIRMS every ${snapshot.cadenceHours} h. ` +
-                  "Search, and full detail for every location, need the API."}
-              {/* Current-ness is judged from the newest detection, with the
-                  same 48-hour line the API uses. A one-off build made minutes ago
-                  holds today's data; calling it "not current" was wrong. */}
-              {!API_CONFIGURED && mode !== "near_real_time" &&
-                (snapshot.scheduled
-                  ? `Scheduled refresh has fallen behind: this data was last rebuilt ${formatAge(snapshot.buildAgeHours)} ago.`
-                  : `One-off build from ${formatAge(snapshot.buildAgeHours)} ago that does not refresh itself` +
-                    (snapshot.newestAgeHours != null && snapshot.newestAgeHours > 48
-                      ? `; its newest detection is ${formatAge(snapshot.newestAgeHours)} old, so it is no longer current.`
-                      : "."))}
-              {API_CONFIGURED &&
-                `API unreachable — showing the last snapshot, built ${builtOn}` +
-                  (snapshot.newestAgeHours != null && snapshot.newestAgeHours > 48
-                    ? `; its newest detection is ${formatAge(snapshot.newestAgeHours)} old.`
-                    : ".")}
-            </div>
-          )}
-
-          {!loading && marks && hotspots.length === 0 && !error && (
-            <div className="map__notice">
-              {fromSnapshot &&
-              filters.withinHours !== "all" &&
-              snapshot?.newestAgeHours != null &&
-              snapshot.newestAgeHours > filters.withinHours
-                ? `No detections in the last ${filters.withinHours} hours. The newest detection in this data is from ${newestOn}, ${formatAge(snapshot.newestAgeHours)} ago.`
-                : "No detections match these filters. Narrow time ranges can legitimately be empty."}
-            </div>
-          )}
-
-          {/* The snapshot carries a class-balanced subset, not everything.
-              Saying so is the difference between a readable map and a
-              misleading one. */}
-          {!loading && truncated && !error && (
-            <div className="map__notice map__notice--info">
-              Snapshot: showing {hotspots.length.toLocaleString()} locations from{" "}
-              {totalMatching.toLocaleString()} recorded detections. Counts in the
-              panels below are for the full set.
-            </div>
-          )}
-        </div>
-
-        <MapView
-          hotspots={hotspots}
-          selectedId={selected?.id ?? null}
-          onSelect={handleSelect}
-          focus={focus}
-        />
-      </div>
-
-      <DetailPanel
-        detail={detail}
-        loading={detailLoading}
-        fromSnapshot={detailFromSnapshot}
-        unavailable={detailUnavailable}
-      />
-
-      <StatsBar
-        analytics={analytics}
-        shown={hotspots.length}
-        totalMatching={totalMatching}
-      />
+        </aside>
+      </main>
     </div>
+  );
+}
+
+function Tile({
+  value,
+  label,
+  tone,
+}: {
+  value: number;
+  label: string;
+  tone?: "industrial_fire" | "persistent_industrial";
+}) {
+  return (
+    <div className="tile">
+      <div className={`tile__value ${tone ? `tile__value--${tone}` : ""}`}>
+        {value.toLocaleString()}
+      </div>
+      <div className="tile__label">{label}</div>
+    </div>
+  );
+}
+
+function FlameIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
+      strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
+    </svg>
   );
 }

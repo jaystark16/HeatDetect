@@ -197,9 +197,8 @@ export interface LocationCollection {
 /**
  * What the map needs to draw one mark.
  *
- * Deliberately narrower than either source type. Locations and cached-snapshot
- * detections carry different fields, and a shared shape means neither has to
- * invent a value it does not have to satisfy the other.
+ * Built from a `LocationSummary`, which the API and the cached snapshot both
+ * serve, so the map cannot tell — and need not care — which one answered.
  */
 export interface MapMark {
   /** Detection id to open in the detail panel. */
@@ -211,6 +210,9 @@ export interface MapMark {
   distinct_days: number;
   /** Strongest observation at this location; drives mark size. */
   frp_mw: number;
+  /** Satellite passes that detected heat here, over the whole window. */
+  observation_count: number;
+  last_seen: string;
 }
 
 export interface SearchMatch {

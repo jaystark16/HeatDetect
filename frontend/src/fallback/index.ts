@@ -18,16 +18,20 @@
  *    that. A scheduled build that silently stops falls back to "cached snapshot"
  *    on its own.
  * 3. **It is fetched lazily, not imported.** Importing the JSON would inline
- *    ~1.8 MiB into the bundle for every visitor.
+ *    ~5 MiB into the bundle for every visitor.
+ *
+ * It carries **every location** (one row per ~1 km cell, as `/api/locations`
+ * serves), so the offline map is complete rather than a sample. Full detail is
+ * carried for a subset only.
  */
 
 import type {
   Analytics,
   DatasetInfo,
   Filters,
-  HotspotCollection,
   HotspotDetail,
-  HotspotSummary,
+  LocationCollection,
+  LocationSummary,
   ModelInfo,
 } from "../types";
 
@@ -47,14 +51,14 @@ interface Snapshot {
   note: string;
   /** Absent from snapshots built before refresh metadata existed. */
   refresh?: SnapshotRefresh;
-  total_matching: number;
+  total_locations: number;
   coverage_note: string;
   surveyed_cells: number;
   unsurveyed_cells: number;
   analytics: Analytics;
   model: ModelInfo;
   datasets: DatasetInfo[];
-  summaries: HotspotSummary[];
+  locations: LocationSummary[];
   details: Record<string, HotspotDetail>;
 }
 
@@ -78,11 +82,12 @@ async function load(): Promise<Snapshot> {
     }
     const parsed = (await response.json()) as Snapshot;
 
-    // Refuse the retired format rather than mis-date it. Its rows carry
-    // `hours_ago` instead of a real timestamp.
-    if (parsed.summaries.length > 0 && !parsed.summaries[0].acquired_at) {
+    // Refuse retired formats rather than misread them: detection rows sampled
+    // by quota (which hid most industrial locations), and before that rows
+    // carrying `hours_ago` instead of a real timestamp.
+    if (!Array.isArray(parsed.locations)) {
       throw new Error(
-        "Snapshot uses a retired format without real timestamps; rebuild it with scripts/export_snapshot.py.",
+        "Snapshot uses a retired format; rebuild it with scripts/export_snapshot.py.",
       );
     }
     cached = parsed;
@@ -127,7 +132,7 @@ export interface FallbackMeta extends SnapshotFreshness {
   coverageNote: string;
   note: string;
   detailCount: number;
-  summaryCount: number;
+  locationCount: number;
 }
 
 function freshness(snapshot: Snapshot): SnapshotFreshness {
@@ -156,33 +161,32 @@ export async function fallbackMeta(): Promise<FallbackMeta> {
     coverageNote: snapshot.coverage_note,
     note: snapshot.note,
     detailCount: Object.keys(snapshot.details).length,
-    summaryCount: snapshot.summaries.length,
+    locationCount: snapshot.locations.length,
   };
 }
 
-/** Mirrors the server-side filtering in `backend/app/service.py`. */
-export async function fallbackHotspots(
+/** Mirrors `list_locations` in `backend/app/service.py`, filter for filter. */
+export async function fallbackLocations(
   filters: Filters,
-): Promise<HotspotCollection> {
+): Promise<LocationCollection> {
   const snapshot = await load();
-  const now = Date.now();
-  let results = snapshot.summaries;
+  let results = snapshot.locations;
 
   if (filters.label !== "all") {
-    results = results.filter((h) => h.label === filters.label);
+    results = results.filter((l) => l.label === filters.label);
   }
   if (filters.minFrpMw > 0) {
-    results = results.filter((h) => h.frp_mw >= filters.minFrpMw);
+    results = results.filter((l) => l.max_frp_mw >= filters.minFrpMw);
   }
   if (filters.minDistinctDays > 0) {
-    results = results.filter((h) => h.distinct_days >= filters.minDistinctDays);
+    results = results.filter((l) => l.distinct_days >= filters.minDistinctDays);
   }
   if (filters.withinHours !== "all") {
     // Against the real clock. If the snapshot is old, "last 24 hours" is
     // honestly empty — which the page explains — rather than quietly filled
-    // with detections from the snapshot's own last day.
-    const cutoff = now - filters.withinHours * HOUR_MS;
-    results = results.filter((h) => Date.parse(h.acquired_at) >= cutoff);
+    // with locations from the snapshot's own last day.
+    const cutoff = Date.now() - filters.withinHours * HOUR_MS;
+    results = results.filter((l) => Date.parse(l.last_seen) >= cutoff);
   }
 
   const fresh = freshness(snapshot);
@@ -192,8 +196,7 @@ export async function fallbackHotspots(
     count: results.length,
     total_matching: results.length,
     limit: results.length,
-    offset: 0,
-    hotspots: results,
+    locations: results,
     provenance: {
       data_source: "firms_open_archive",
       generated_at: snapshot.generated_at,

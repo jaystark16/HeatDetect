@@ -12,13 +12,15 @@ interface Props {
   snapshot: FallbackMeta | null;
 }
 
-const MODE_COPY: Record<DataMode, { chip: string; className: string }> = {
-  live: { chip: "● Live", className: "chip--live" },
+const MODE_COPY: Record<DataMode, { chip: string; pulse: boolean }> = {
+  live: { chip: "Live", pulse: true },
   // NASA's own name for this data class. It is not "Live": the page is reading
   // a file a scheduled build wrote, and the line beside the chip says when.
-  near_real_time: { chip: "● Near real time", className: "chip--live" },
-  historical: { chip: "◆ Historical", className: "chip--sample" },
-  cached_snapshot: { chip: "◆ Cached snapshot", className: "chip--sample" },
+  near_real_time: { chip: "Near real time", pulse: true },
+  // No pulse: a heartbeat on data that has stopped refreshing would be a lie
+  // told in animation instead of words.
+  historical: { chip: "Historical", pulse: false },
+  cached_snapshot: { chip: "Cached snapshot", pulse: false },
 };
 
 function formatDate(value: string | null): string {
@@ -96,13 +98,18 @@ export default function ProvenanceBar({
 
   return (
     <div className="provenance" ref={containerRef}>
-      <span className={`chip ${copy.className}`}>{copy.chip}</span>
+      <span className="provenance__line">{detailLine}</span>
 
-      <span className="topbar__sub">{detailLine}</span>
+      <span className={`status-pill ${copy.pulse ? "status-pill--current" : "status-pill--stale"}`}>
+        <span className="status-pill__dot" aria-hidden="true">
+          {copy.pulse && <span className="status-pill__ping" />}
+        </span>
+        {copy.chip}
+      </span>
 
       <button
         type="button"
-        className="topbar__button"
+        className="pill-button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
       >

@@ -1,5 +1,6 @@
-import { CLASS_ORDER, CLASS_STYLES } from "../classes";
-import type { Analytics, Filters, Provenance, ThermalClass } from "../types";
+import { useEffect, useState } from "react";
+
+import type { Analytics, Filters, Provenance } from "../types";
 
 interface Props {
   filters: Filters;
@@ -7,169 +8,122 @@ interface Props {
   onChange: (next: Filters) => void;
 }
 
-const TIME_WINDOWS: { value: Filters["withinHours"]; label: string }[] = [
-  { value: 24, label: "Last 24 hours" },
-  { value: 72, label: "Last 3 days" },
-  { value: 168, label: "Last 7 days" },
-];
-
 /**
- * Label the unfiltered option with the window the data actually spans.
+ * Span of the data, in whole days, read from provenance.
  *
- * It used to read "Full 7-day window", which was true when the database held
- * one archive fetch. The pipeline appends, so after two months of runs the
- * database spanned 60 days and the label was simply wrong. Deriving it from
- * provenance means it cannot drift again.
+ * The "All" button used to say "Full 7-day window", which was true when the
+ * database held one archive fetch. The pipeline appends, so after two months of
+ * runs it spanned 60 days and the label was simply wrong. Deriving it means it
+ * cannot drift again.
  */
-function allWindowLabel(provenance: Provenance | null | undefined): string {
+export function windowDays(provenance: Provenance | null | undefined): number | null {
   const oldest = provenance?.oldest_detection_at;
   const newest = provenance?.newest_detection_at;
-  if (!oldest || !newest) return "All ingested data";
-
-  const days = Math.max(
-    1,
-    Math.round((Date.parse(newest) - Date.parse(oldest)) / 86_400_000),
-  );
-  return `All ingested data (${days} days)`;
+  if (!oldest || !newest) return null;
+  return Math.max(1, Math.round((Date.parse(newest) - Date.parse(oldest)) / 86_400_000));
 }
 
 /**
  * Display filter over a location's distinct-day count.
  *
- * These are *not* the classification threshold, and the labels deliberately no
- * longer claim to be. That threshold is window-relative in
- * `backend/app/labels.py` — a quarter of the days available to observe, floored
- * at four — so it is 4 against a 7-day archive and 16 against a 61-day
- * backfill. Naming a fixed number here as "persistent" was true only for the
- * original one-week window and silently became wrong once history grew.
+ * This is *not* the classification threshold, and the label deliberately does
+ * not claim to be. That threshold is window-relative in `backend/app/labels.py`
+ * — a quarter of the days available to observe, floored at four — so a fixed
+ * number named "persistent" here would be true for one window and wrong for
+ * the next.
  */
-const PERSISTENCE_STEPS: { value: number; label: string }[] = [
-  { value: 0, label: "Any" },
-  { value: 2, label: "2+ days (recurring)" },
-  { value: 4, label: "4+ days" },
-  { value: 14, label: "14+ days (long-running)" },
-  // The database accumulates, so baselines lengthen over time; locations in
-  // the Jharia coalfield now reach 46 distinct days. A 6-day ceiling stopped
-  // discriminating once the window grew past a week.
-  { value: 30, label: "30+ days (entrenched)" },
-];
+const MAX_DAYS_SLIDER = 60;
+
+/** Slider ceiling near the measured p99 (~18 MW); a 100 MW cap is empty travel. */
+const MAX_FRP_SLIDER = 20;
+
+/** Commit slider drags after they settle, not once per pixel. */
+const SLIDER_SETTLE_MS = 200;
 
 export default function FilterPanel({ filters, analytics, onChange }: Props) {
-  const counts = new Map(analytics?.by_class.map((c) => [c.label, c]) ?? []);
+  const days = windowDays(analytics?.provenance);
+
+  const windows: { value: Filters["withinHours"]; label: string; title: string }[] = [
+    { value: 24, label: "24h", title: "Detected in the last 24 hours" },
+    { value: 72, label: "72h", title: "Detected in the last 3 days" },
+    { value: 168, label: "7d", title: "Detected in the last 7 days" },
+    {
+      value: "all",
+      label: days ? `All · ${days}d` : "All",
+      title: days ? `Everything ingested: ${days} days of data` : "Everything ingested",
+    },
+  ];
+
+  // Local draft values so the thumb moves smoothly; the filter — and the
+  // request behind it — follows once the drag pauses.
+  const [frp, setFrp] = useState(filters.minFrpMw);
+  const [minDays, setMinDays] = useState(filters.minDistinctDays);
+
+  useEffect(() => setFrp(filters.minFrpMw), [filters.minFrpMw]);
+  useEffect(() => setMinDays(filters.minDistinctDays), [filters.minDistinctDays]);
+
+  useEffect(() => {
+    if (frp === filters.minFrpMw && minDays === filters.minDistinctDays) return;
+    const timer = window.setTimeout(
+      () => onChange({ ...filters, minFrpMw: frp, minDistinctDays: minDays }),
+      SLIDER_SETTLE_MS,
+    );
+    return () => window.clearTimeout(timer);
+  }, [frp, minDays, filters, onChange]);
 
   return (
-    <aside className="panel panel--filters">
-      <div className="field">
-        <label className="field__label" htmlFor="f-class">
-          Class
-        </label>
-        <select
-          id="f-class"
-          value={filters.label}
-          onChange={(e) =>
-            onChange({ ...filters, label: e.target.value as ThermalClass | "all" })
-          }
-        >
-          <option value="all">All classes</option>
-          {CLASS_ORDER.map((cls) => (
-            <option key={cls} value={cls}>
-              {CLASS_STYLES[cls].shortLabel}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="field">
-        <label className="field__label" htmlFor="f-window">
-          Time window
-        </label>
-        <select
-          id="f-window"
-          value={String(filters.withinHours)}
-          onChange={(e) =>
-            onChange({
-              ...filters,
-              withinHours: e.target.value === "all" ? "all" : Number(e.target.value),
-            })
-          }
-        >
-          {TIME_WINDOWS.map((w) => (
-            <option key={String(w.value)} value={String(w.value)}>
-              {w.label}
-            </option>
-          ))}
-          <option value="all">{allWindowLabel(analytics?.provenance)}</option>
-        </select>
-      </div>
-
-      <div className="field">
-        <label className="field__label" htmlFor="f-days">
-          Persistence
-        </label>
-        <select
-          id="f-days"
-          value={filters.minDistinctDays}
-          onChange={(e) =>
-            onChange({ ...filters, minDistinctDays: Number(e.target.value) })
-          }
-        >
-          {PERSISTENCE_STEPS.map((s) => (
-            <option key={s.value} value={s.value}>
-              {s.label}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      <div className="field">
-        <label className="field__label" htmlFor="f-frp">
-          Minimum FRP · {filters.minFrpMw.toFixed(1)} MW
-        </label>
-        <input
-          id="f-frp"
-          type="range"
-          min={0}
-          // Capped near the measured p99 (~18 MW). A 100 MW cap would leave most
-          // of the slider travel in a range that contains no data at all.
-          max={20}
-          step={0.5}
-          value={filters.minFrpMw}
-          onChange={(e) => onChange({ ...filters, minFrpMw: Number(e.target.value) })}
-        />
-      </div>
-
-      <h2 className="section-title">Classes</h2>
-      {/* Identity is never colour-alone: every swatch is labelled, and the
-          counts come from the analytics endpoint rather than being decorative. */}
-      <div className="legend">
-        {CLASS_ORDER.map((cls) => {
-          const count = counts.get(cls);
+    <div className="filters">
+      <div className="segmented" role="group" aria-label="Time window">
+        {windows.map((w) => {
+          const active = filters.withinHours === w.value;
           return (
             <button
               type="button"
-              key={cls}
-              className={`legend__row legend__row--button ${
-                filters.label === cls ? "is-active" : ""
-              }`}
-              onClick={() =>
-                onChange({ ...filters, label: filters.label === cls ? "all" : cls })
-              }
-              aria-pressed={filters.label === cls}
+              key={String(w.value)}
+              className={`segmented__option ${active ? "is-active" : ""}`}
+              aria-pressed={active}
+              title={w.title}
+              onClick={() => onChange({ ...filters, withinHours: w.value })}
             >
-              <span className={`legend__swatch legend__swatch--${cls}`} />
-              <span className="legend__label">{CLASS_STYLES[cls].shortLabel}</span>
-              {count && <span className="legend__count">{count.cells}</span>}
+              {w.label}
             </button>
           );
         })}
       </div>
 
-      <h2 className="section-title">Reading the map</h2>
-      <ul className="hint-list">
-        <li>Mark area is proportional to fire radiative power.</li>
-        <li>Thicker outlines mean the location recurs on more days.</li>
-        <li>Hollow marks are unclassified, not a fourth category.</li>
-      </ul>
-    </aside>
+      <div className="slider">
+        <label className="slider__head" htmlFor="f-days">
+          <span>Seen on at least</span>
+          <span className="slider__value">
+            {minDays === 0 ? "any day" : `${minDays} ${minDays === 1 ? "day" : "days"}`}
+          </span>
+        </label>
+        <input
+          id="f-days"
+          type="range"
+          min={0}
+          max={MAX_DAYS_SLIDER}
+          step={1}
+          value={minDays}
+          onChange={(e) => setMinDays(Number(e.target.value))}
+        />
+      </div>
+
+      <div className="slider">
+        <label className="slider__head" htmlFor="f-frp">
+          <span>Min fire radiative power</span>
+          <span className="slider__value">{frp.toFixed(1)} MW</span>
+        </label>
+        <input
+          id="f-frp"
+          type="range"
+          min={0}
+          max={MAX_FRP_SLIDER}
+          step={0.5}
+          value={frp}
+          onChange={(e) => setFrp(Number(e.target.value))}
+        />
+      </div>
+    </div>
   );
 }

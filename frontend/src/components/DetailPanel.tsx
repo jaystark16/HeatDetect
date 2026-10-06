@@ -7,6 +7,7 @@ interface Props {
   fromSnapshot: boolean;
   /** Set when neither the API nor the snapshot had detail for this selection. */
   unavailable: boolean;
+  onBack: () => void;
 }
 
 function metres(value: number | null): string {
@@ -25,44 +26,58 @@ export default function DetailPanel({
   loading,
   fromSnapshot,
   unavailable,
+  onBack,
 }: Props) {
+  const back = (
+    <button type="button" className="back-button" onClick={onBack}>
+      ← Back to feed
+    </button>
+  );
+
   if (loading) {
     return (
-      <aside className="panel panel--detail">
+      <div className="detail">
+        {back}
         <p className="detail__empty">Loading detail…</p>
-      </aside>
+      </div>
     );
   }
 
   if (unavailable) {
     return (
-      <aside className="panel panel--detail">
+      <div className="detail">
+        {back}
         <h2 className="detail__label">Detail unavailable</h2>
         <p className="detail__empty">
           This view is served from a snapshot file, which carries full evidence
           for a class-balanced subset of locations to stay small. Select another
           mark, or run the API to see detail for any detection.
         </p>
-      </aside>
+      </div>
     );
   }
 
   if (!detail) {
     return (
-      <aside className="panel panel--detail">
-        <p className="detail__empty">
-          Select a hotspot to see what was measured, what was computed from its
-          history, and how it was classified.
-        </p>
-      </aside>
+      <div className="detail">
+        {back}
+        <p className="detail__empty">No detail was returned for this location.</p>
+      </div>
     );
   }
 
   const { observation: obs, persistence: p, context: ctx, classification: cls } = detail;
 
   return (
-    <aside className="panel panel--detail">
-      <h2 className="detail__label">{cls.display_label}</h2>
+    <div className="detail">
+      {back}
+      <div className="detail__heading">
+        <span className={`dot dot--lg dot--${cls.label}`} aria-hidden="true" />
+        <h2 className="detail__label">{cls.display_label}</h2>
+      </div>
+      <p className="detail__coords">
+        {detail.latitude.toFixed(4)}° N, {detail.longitude.toFixed(4)}° E
+      </p>
 
       {/* Where the verdict came from, and — for rules — that a probability
           would be meaningless rather than merely missing. */}
@@ -204,6 +219,6 @@ export default function DetailPanel({
           </dl>
         </div>
       )}
-    </aside>
+    </div>
   );
 }

@@ -1,12 +1,14 @@
 import L from "leaflet";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   CircleMarker,
+  LayerGroup,
   LayersControl,
   MapContainer,
   TileLayer,
   Tooltip,
   useMap,
+  ZoomControl,
 } from "react-leaflet";
 
 import {
@@ -109,6 +111,8 @@ export interface FocusTarget {
   latitude: number;
   longitude: number;
   nonce: number;
+  /** Defaults to street level, which suits a searched facility. */
+  zoom?: number;
 }
 
 interface Props {
@@ -130,8 +134,8 @@ function FlyToFocus({ focus }: { focus: FocusTarget | null }) {
 
   useEffect(() => {
     if (!focus) return;
-    map.flyTo([focus.latitude, focus.longitude], 11, { duration: 0.8 });
-  }, [focus?.nonce, focus?.latitude, focus?.longitude, map]);
+    map.flyTo([focus.latitude, focus.longitude], focus.zoom ?? 11, { duration: 0.8 });
+  }, [focus?.nonce, focus?.latitude, focus?.longitude, focus?.zoom, map]);
 
   return null;
 }
@@ -160,6 +164,17 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
     );
   }, [hotspots]);
 
+  /**
+   * Sorting alone does not decide draw order. Leaflet's canvas paints layers
+   * in the order they were *added*, and React keeps marks that survive a filter
+   * change mounted. Narrow to "16+ days" and back, and the persistent sources
+   * stay in place while ten thousand vegetation fires are re-added after them
+   * — on top. Observed: the blue marks vanished under green. Remounting the
+   * group whenever the set changes re-adds everything in priority order.
+   */
+  const generation = useRef(0);
+  const groupKey = useMemo(() => ++generation.current, [ordered]);
+
   return (
     <MapContainer
       center={INDIA_CENTER}
@@ -168,14 +183,22 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
       // Essential, not an optimisation: a few thousand SVG paths makes panning
       // unusable. Canvas keeps interaction smooth at full data volume.
       preferCanvas
+      // Moved to the right: the top-left corner carries the legend.
+      zoomControl={false}
+      // Fractional fits. The analysis box overshoots zoom 5 by ~80 px of
+      // height, and whole-number snapping then fell back to zoom 4, leaving
+      // India a small patch in a view of half of Asia.
+      zoomSnap={0.25}
     >
+      <ZoomControl position="topright" />
       <KeepSized />
       <FitToData hotspots={hotspots} suspended={focus !== null} />
       <FlyToFocus focus={focus} />
 
       {/* Both basemaps are key-free. Satellite is the default because seeing the
           ground around a hotspot is what makes an industrial site legible as
-          one. CARTO's basemaps now require an API key and were dropped. */}
+          one. CARTO's basemaps now require an API key and were dropped; Esri's
+          reference layer supplies key-free place names over the imagery. */}
       <LayersControl position="topright">
         <LayersControl.BaseLayer checked name="Satellite">
           <TileLayer
@@ -191,48 +214,59 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
             maxZoom={19}
           />
         </LayersControl.BaseLayer>
+        <LayersControl.Overlay checked name="Place labels">
+          <TileLayer
+            url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+            attribution="Labels &copy; Esri"
+            maxZoom={18}
+            opacity={0.75}
+          />
+        </LayersControl.Overlay>
       </LayersControl>
 
-      {palette &&
-        ordered.map((hotspot) => {
-          const style = CLASS_STYLES[hotspot.label];
-          const colours = palette[hotspot.label];
-          const selected = hotspot.id === selectedId;
-          const radius = radiusFromFrp(hotspot.frp_mw, hotspot.label);
+      {palette && (
+        <LayerGroup key={groupKey}>
+          {ordered.map((hotspot) => {
+            const style = CLASS_STYLES[hotspot.label];
+            const colours = palette[hotspot.label];
+            const selected = hotspot.id === selectedId;
+            const radius = radiusFromFrp(hotspot.frp_mw, hotspot.label);
 
-          return (
-            <CircleMarker
-              key={hotspot.id}
-              center={[hotspot.latitude, hotspot.longitude]}
-              radius={selected ? radius + 4 : radius}
-              pathOptions={{
-                color: selected ? "#ffffff" : colours.stroke,
-                weight: selected
-                  ? 3
-                  : hotspot.label === "unknown"
+            return (
+              <CircleMarker
+                key={hotspot.id}
+                center={[hotspot.latitude, hotspot.longitude]}
+                radius={selected ? radius + 4 : radius}
+                pathOptions={{
+                  color: selected ? "#ffffff" : colours.stroke,
+                  weight: selected
+                    ? 3
+                    : hotspot.label === "unknown"
+                      ? 1
+                      : strokeWeightFromDays(hotspot.distinct_days),
+                  fillColor: colours.fill,
+                  fillOpacity: style.fill === "hollow" ? 0.12 : 0.85,
+                  opacity: selected
                     ? 1
-                    : strokeWeightFromDays(hotspot.distinct_days),
-                fillColor: colours.fill,
-                fillOpacity: style.fill === "hollow" ? 0.12 : 0.85,
-                opacity: selected
-                  ? 1
-                  : hotspot.label === "unknown"
-                    ? 0.4
-                    : STROKE_OPACITY,
-              }}
-              eventHandlers={{ click: () => onSelect(hotspot) }}
-            >
-              <Tooltip direction="top" offset={[0, -radius]}>
-                <strong>{style.shortLabel}</strong>
-                <br />
-                {hotspot.frp_mw.toFixed(2)} MW peak
-                <br />
-                {hotspot.distinct_days} distinct{" "}
-                {hotspot.distinct_days === 1 ? "day" : "days"} at this location
-              </Tooltip>
-            </CircleMarker>
-          );
-        })}
+                    : hotspot.label === "unknown"
+                      ? 0.4
+                      : STROKE_OPACITY,
+                }}
+                eventHandlers={{ click: () => onSelect(hotspot) }}
+              >
+                <Tooltip direction="top" offset={[0, -radius]}>
+                  <strong>{style.shortLabel}</strong>
+                  <br />
+                  {hotspot.frp_mw.toFixed(2)} MW peak
+                  <br />
+                  {hotspot.distinct_days} distinct{" "}
+                  {hotspot.distinct_days === 1 ? "day" : "days"} at this location
+                </Tooltip>
+              </CircleMarker>
+            );
+          })}
+        </LayerGroup>
+      )}
     </MapContainer>
   );
 }

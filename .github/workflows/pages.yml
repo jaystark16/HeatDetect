@@ -6,7 +6,7 @@ name: Deploy dashboard to GitHub Pages
 # 3 hours after a satellite overpass, so refreshing more often would mostly
 # re-download the same files. This keeps the site as current as its source.
 #
-# Why rebuild instead of commit: the snapshot is ~1.8 MiB. Committing it eight
+# Why rebuild instead of commit: the snapshot is ~6 MiB. Committing it eight
 # times a day would add gigabytes to the repository within a year. Each run
 # rebuilds the database from scratch on the runner — the pipeline needs no
 # credentials for this, because the FIRMS regional archives are open and the
@@ -100,7 +100,7 @@ jobs:
           print(f"window   : {s['captured_window']['oldest_detection_at']} -> {newest.isoformat()}")
           print(f"newest   : {age:.1f} h ago")
           print(f"refresh  : {s['refresh']}")
-          print(f"locations: {len(s['summaries'])} summaries, {len(s['details'])} with detail")
+          print(f"locations: {len(s['locations'])} of {s['total_locations']}, {len(s['details'])} with detail")
           PY
 
       - name: Fell back to the committed snapshot

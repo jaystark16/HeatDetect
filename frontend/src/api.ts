@@ -10,7 +10,7 @@ import {
   fallbackAnalytics,
   fallbackDatasets,
   fallbackDetail,
-  fallbackHotspots,
+  fallbackLocations,
   fallbackMeta,
   fallbackModelInfo,
   type FallbackMeta,
@@ -20,7 +20,6 @@ import type {
   DatasetInfo,
   Filters,
   HotspotDetail,
-  HotspotSummary,
   LocationCollection,
   LocationSummary,
   MapMark,
@@ -136,25 +135,9 @@ function locationToMark(location: LocationSummary): MapMark {
     label: location.label,
     distinct_days: location.distinct_days,
     frp_mw: location.max_frp_mw,
+    observation_count: location.observation_count,
+    last_seen: location.last_seen,
   };
-}
-
-/** Collapse cached-snapshot detections to one mark per cell. */
-function summariesToMarks(rows: HotspotSummary[]): MapMark[] {
-  const best = new Map<string, HotspotSummary>();
-  for (const row of rows) {
-    const existing = best.get(row.cell_id);
-    if (!existing || row.frp_mw > existing.frp_mw) best.set(row.cell_id, row);
-  }
-  return [...best.values()].map((row) => ({
-    id: row.id,
-    cell_id: row.cell_id,
-    latitude: row.latitude,
-    longitude: row.longitude,
-    label: row.label,
-    distinct_days: row.distinct_days,
-    frp_mw: row.frp_mw,
-  }));
 }
 
 export interface MarkCollection {
@@ -199,9 +182,10 @@ async function withFallback<T, A extends unknown[]>(
 export const api = {
   marks: (filters: Filters) =>
     withFallback(fetchMarks, async () => {
-      const page = await fallbackHotspots(filters);
+      // Same rows as /api/locations, so both paths draw identical marks.
+      const page = await fallbackLocations(filters);
       return {
-        marks: summariesToMarks(page.hotspots),
+        marks: page.locations.map(locationToMark),
         totalMatching: page.total_matching,
         provenance: page.provenance,
       };

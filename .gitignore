@@ -44,3 +44,6 @@ backend/data/*.db-wal
 .idea/
 .DS_Store
 Thumbs.db
+
+# Browser-automation screenshots and logs
+.playwright-mcp/

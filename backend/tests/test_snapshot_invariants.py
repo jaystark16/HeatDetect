@@ -4,10 +4,14 @@ The snapshot is what the deployed GitHub Pages site serves, so it is the most
 publicly visible artefact in the project. These tests assert the properties that
 make it honest, because a regression here misleads every visitor.
 
-One of them exists because of a real defect: the export originally took the top
-N rows from a persistence-ordered query. Vegetation fires are short-lived by
-definition, so the snapshot contained **zero** of them and the offline map
-implied every thermal anomaly in India was industrial.
+Two exist because of real defects in how the export sampled:
+
+- It took the top N rows of a persistence-ordered query. Vegetation fires are
+  short-lived by definition, so it contained **zero** of them and the offline
+  map implied every thermal anomaly in India was industrial.
+- Per-class quotas fixed that, but counted *detections*. A persistent source
+  has one per satellite pass, so 1,400 rows covered 7 of 206
+  persistent-industrial locations. The snapshot now carries every location.
 """
 
 from __future__ import annotations
@@ -68,14 +72,22 @@ def test_snapshot_reports_coverage(snapshot):
     assert "unsurveyed_cells" in snapshot
 
 
-def test_every_class_appears_in_the_summaries(snapshot):
-    """The defect this guards: a persistence-ordered top-N excluded vegetation
-    fires entirely, so the offline map misrepresented the data."""
-    counts = Counter(s["label"] for s in snapshot["summaries"])
-    missing = ALL_CLASSES - set(counts)
-    assert not missing, f"classes absent from the snapshot: {missing}"
+def test_snapshot_carries_every_location(snapshot):
+    """Complete, not sampled: the offline map must match what the API serves."""
+    locations = snapshot["locations"]
+    assert len(locations) == snapshot["total_locations"]
+    assert len(locations) == snapshot["analytics"]["total_cells"]
+    assert len({loc["cell_id"] for loc in locations}) == len(locations)
+
+
+def test_location_counts_per_class_match_the_analytics(snapshot):
+    """Regression: quotas over detection rows showed 7 of 206 persistent
+    industrial locations. Every class must be present in full."""
+    counts = Counter(loc["label"] for loc in snapshot["locations"])
+    expected = {c["label"]: c["cells"] for c in snapshot["analytics"]["by_class"]}
+    assert dict(counts) == {k: v for k, v in expected.items() if v}
     for label in ALL_CLASSES:
-        assert counts[label] > 0
+        assert counts[label] > 0, f"{label} absent from the snapshot"
 
 
 def test_every_class_appears_in_the_details(snapshot):
@@ -86,11 +98,31 @@ def test_every_class_appears_in_the_details(snapshot):
     assert not missing, f"classes with no inspectable detail: {missing}"
 
 
-def test_detail_ids_all_exist_in_the_summaries(snapshot):
-    """A detail for a hotspot that is not on the map is unreachable."""
-    summary_ids = {s["id"] for s in snapshot["summaries"]}
-    orphans = set(snapshot["details"]) - summary_ids
-    assert not orphans, f"{len(orphans)} details are not reachable from the map"
+def test_every_detail_is_one_the_map_actually_opens(snapshot):
+    """A detail no mark opens is unreachable.
+
+    Regression: details were once taken from the first detection rows of each
+    class — several passes over the same few cells, rarely the detection the
+    map opened — so the most persistent locations all read "detail
+    unavailable".
+    """
+    opened = {loc["representative_detection_id"] for loc in snapshot["locations"]}
+    unreachable = set(snapshot["details"]) - opened
+    assert not unreachable, f"{len(unreachable)} details no map mark opens"
+
+
+def test_the_most_persistent_locations_have_detail(snapshot):
+    """The feed lists locations by days seen, so its top must be inspectable."""
+    top = sorted(
+        snapshot["locations"],
+        key=lambda loc: (-loc["distinct_days"], -loc["max_frp_mw"]),
+    )[:20]
+    missing = [
+        loc["cell_id"]
+        for loc in top
+        if loc["representative_detection_id"] not in snapshot["details"]
+    ]
+    assert not missing, f"{len(missing)} of the 20 most persistent have no detail"
 
 
 def test_no_rule_classification_carries_a_probability(snapshot):
@@ -177,10 +209,16 @@ def test_timestamps_are_real_and_inside_the_declared_window(snapshot):
     newest = datetime.fromisoformat(window["newest_detection_at"])
     built = datetime.fromisoformat(snapshot["generated_at"])
 
-    rows = list(snapshot["summaries"]) + list(snapshot["details"].values())
-    assert rows
-    for row in rows:
+    def parse(value: str) -> datetime:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+    stamped = [(d["id"], d["acquired_at"]) for d in snapshot["details"].values()]
+    stamped += [(loc["cell_id"], loc["last_seen"]) for loc in snapshot["locations"]]
+    assert stamped
+    for key, value in stamped:
+        when = parse(value)
+        assert oldest <= when <= newest, f"{key} dated outside the window"
+        assert when <= built, f"{key} is dated after the snapshot was built"
+
+    for row in [*snapshot["locations"], *snapshot["details"].values()]:
         assert "hours_ago" not in row, "retired, fabrication-prone age field is back"
-        acquired = datetime.fromisoformat(row["acquired_at"].replace("Z", "+00:00"))
-        assert oldest <= acquired <= newest, f"{row['id']} dated outside the window"
-        assert acquired <= built, f"{row['id']} is dated after the snapshot was built"
