@@ -1,0 +1,139 @@
+/**
+ * The gate between the model's wording and the screen.
+ *
+ * The model is allowed to rephrase computed facts, nothing more. This checks
+ * that it did only that: every number it wrote must be one of the computed
+ * values (or a rounding of one), it must not assert certainty the data cannot
+ * support, and it must not introduce a proper noun that appears nowhere in the
+ * facts. Anything that fails is discarded and the computed answer is shown.
+ */
+
+import type { Answer } from "./intents";
+
+export interface Verdict {
+  ok: boolean;
+  /** Why the wording was rejected, for the page to state. */
+  reason?: string;
+}
+
+const NUMBER = /-?\d[\d,]*(?:\.\d+)?/g;
+
+/**
+ * A thermal anomaly is evidence of heat, not proof of a fire (CLAUDE.md). These
+ * turn a hedged finding into a claim.
+ */
+const CERTAINTY =
+  /\b(confirmed|confirms|definitely|certainly|undoubtedly|proves?|proven|proof that|guaranteed|without doubt|for sure)\b/i;
+
+/** Proper nouns the model may use without them appearing in the facts. */
+const ALWAYS_ALLOWED = new Set(["NASA", "FIRMS", "India", "OpenStreetMap", "VIIRS", "MODIS", "MW", "km"]);
+
+const MAX_LENGTH = 900;
+
+/**
+ * What a source *is*. The data says "persistent industrial source"; calling it
+ * a coal mine because the question did is the model adopting the asker's
+ * assumption as fact. Observed: asked about coal mines, it wrote "the coal mine
+ * at 31.5 MW" about a location the data never identified.
+ */
+const TYPE_WORDS =
+  /\b(mines?|mining|coal(?:field|fields)?|collier(?:y|ies)|refiner(?:y|ies)|factor(?:y|ies)|plants?|steel(?:works)?|cement|kilns?|bricks?|smelters?|furnaces?|power stations?|oil|gas|flares?|wells?|crops?|stubble|farms?|forests?|wildfires?|grassland|landfills?)\b/gi;
+
+function numbersIn(text: string): string[] {
+  return (text.match(NUMBER) ?? []).map((n) => n.replace(/,/g, ""));
+}
+
+function decimals(n: string): number {
+  const dot = n.indexOf(".");
+  return dot === -1 ? 0 : n.length - dot - 1;
+}
+
+/**
+ * Numbers the model may write: every computed value, plus anything the
+ * visitor typed (echoing "24 hours" back is not fabrication).
+ */
+function allowedNumbers(answer: Answer, question: string): number[] {
+  const source = [answer.title, answer.summary, ...answer.facts, question].join(" ");
+  return numbersIn(source).map(Number).filter(Number.isFinite);
+}
+
+/** A written number passes if it equals an allowed value rounded to its precision. */
+function supported(written: string, allowed: number[]): boolean {
+  const value = Number(written);
+  if (!Number.isFinite(value)) return true;
+  const places = decimals(written);
+  const factor = 10 ** places;
+  return allowed.some(
+    (a) =>
+      Math.abs(a - value) < 1e-9 ||
+      Math.abs(Math.round(a * factor) / factor - value) < 1e-9 ||
+      // Coordinates are written with a hemisphere letter, not a sign.
+      Math.abs(Math.round(Math.abs(a) * factor) / factor - Math.abs(value)) < 1e-9,
+  );
+}
+
+/** Capitalised words that are not the first word of a sentence. */
+function midSentenceProperNouns(text: string): string[] {
+  const found: string[] = [];
+  for (const sentence of text.split(/(?<=[.!?])\s+/)) {
+    const words = sentence.split(/\s+/).slice(1);
+    for (const raw of words) {
+      const word = raw.replace(/^[^A-Za-z]+|[^A-Za-z]+$/g, "");
+      if (/^[A-Z][a-z]{2,}$/.test(word) || /^[A-Z]{2,}$/.test(word)) found.push(word);
+    }
+  }
+  return found;
+}
+
+export function verifyWording(text: string, answer: Answer, question: string): Verdict {
+  const trimmed = text.trim();
+  if (!trimmed) return { ok: false, reason: "the model returned nothing" };
+  if (trimmed.length > MAX_LENGTH) return { ok: false, reason: "the model's answer ran too long" };
+
+  const certainty = trimmed.match(CERTAINTY);
+  if (certainty) {
+    return { ok: false, reason: `it claimed certainty ("${certainty[0]}") the data cannot support` };
+  }
+
+  const allowed = allowedNumbers(answer, question);
+  const unsupported = numbersIn(trimmed).filter((n) => !supported(n, allowed));
+  if (unsupported.length) {
+    return {
+      ok: false,
+      reason: `it introduced ${unsupported.length === 1 ? "a number" : "numbers"} not in the data (${unsupported.slice(0, 3).join(", ")})`,
+    };
+  }
+
+  const vocabulary = [answer.title, answer.summary, ...answer.facts, question].join(" ");
+  const invented = midSentenceProperNouns(trimmed).filter(
+    (w) => !ALWAYS_ALLOWED.has(w) && !vocabulary.includes(w),
+  );
+  if (invented.length) {
+    return {
+      ok: false,
+      reason: `it named something not in the data (${[...new Set(invented)].slice(0, 3).join(", ")})`,
+    };
+  }
+
+  // Only what the computed material says, not what the visitor typed.
+  const computed = [answer.title, answer.summary, ...answer.facts].join(" ").toLowerCase();
+  const typed = [...new Set((trimmed.match(TYPE_WORDS) ?? []).map((w) => w.toLowerCase()))];
+  const unfounded = typed.filter((w) => !computed.includes(w));
+  if (unfounded.length) {
+    return {
+      ok: false,
+      reason: `it described a source as something the data does not establish (${unfounded.slice(0, 3).join(", ")})`,
+    };
+  }
+
+  // Wording that restates none of the computed result is commentary, not an
+  // answer. Observed: "further analysis is required to determine…" in place of
+  // the list it was given.
+  const resultNumbers = numbersIn(answer.summary);
+  const written = numbersIn(trimmed);
+  if (resultNumbers.length && !written.some((n) => supported(n, resultNumbers.map(Number)))) {
+    return { ok: false, reason: "it did not state the computed result" };
+  }
+
+  return { ok: true };
+}

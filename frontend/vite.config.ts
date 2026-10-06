@@ -21,4 +21,8 @@ export default defineConfig({
     outDir: "dist",
     sourcemap: true,
   },
+  // The on-device model's worker imports WebLLM, which needs module output.
+  worker: {
+    format: "es",
+  },
 });

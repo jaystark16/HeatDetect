@@ -126,7 +126,7 @@ async function fetchMarks(filters: Filters): Promise<MarkCollection> {
   };
 }
 
-function locationToMark(location: LocationSummary): MapMark {
+export function locationToMark(location: LocationSummary): MapMark {
   return {
     id: location.representative_detection_id,
     cell_id: location.cell_id,

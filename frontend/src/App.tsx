@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { API_CONFIGURED, api } from "./api";
+import type { AskContext } from "./assistant/intents";
+import AskPanel from "./components/AskPanel";
 import { formatAge } from "./components/ProvenanceBar";
 import type { FallbackMeta } from "./fallback";
 import DetailPanel from "./components/DetailPanel";
@@ -51,6 +53,11 @@ export default function App() {
   const [fromSnapshot, setFromSnapshot] = useState(false);
   const [snapshot, setSnapshot] = useState<FallbackMeta | null>(null);
 
+  const [tab, setTab] = useState<"feed" | "ask">("feed");
+  // Every location, independent of the map's filters: the assistant answers
+  // about the data, not about whatever the filters currently show.
+  const [allMarks, setAllMarks] = useState<MapMark[] | null>(null);
+
   // Load metadata once; it does not depend on filters.
   useEffect(() => {
     void (async () => {
@@ -100,6 +107,7 @@ export default function App() {
 
   const handleSelect = useCallback(async (hotspot: MapMark) => {
     const token = ++detailRequest.current;
+    setTab("feed");
     setSelected(hotspot);
     setDetail(null);
     setDetailUnavailable(false);
@@ -157,6 +165,16 @@ export default function App() {
 
   const provenance = markProvenance ?? analytics?.provenance ?? null;
 
+  // Loaded the first time the Ask tab opens, so visitors who never ask pay
+  // nothing; in the static build it reuses the snapshot already in memory.
+  useEffect(() => {
+    if (tab !== "ask" || allMarks) return;
+    void api
+      .marks(DEFAULT_FILTERS)
+      .then((r) => setAllMarks(r.data.marks))
+      .catch(() => setAllMarks(null));
+  }, [tab, allMarks]);
+
   // Freshness is measured from the snapshot itself: a scheduled build only
   // counts as near-real-time while it is demonstrably keeping up.
   const mode: DataMode = fromSnapshot
@@ -166,6 +184,23 @@ export default function App() {
     : provenance?.is_live
       ? "live"
       : "historical";
+
+  const askContext = useMemo<AskContext | null>(
+    () =>
+      allMarks
+        ? {
+            marks: allMarks,
+            analytics,
+            model,
+            provenance,
+            snapshot: fromSnapshot ? snapshot : null,
+            mode,
+            selected: detail,
+            now: Date.now(),
+          }
+        : null,
+    [allMarks, analytics, model, provenance, fromSnapshot, snapshot, mode, detail],
+  );
 
   const builtOn = snapshot ? new Date(snapshot.builtAt).toLocaleString() : null;
   const newestOn = snapshot?.newestDetectionAt
@@ -228,8 +263,35 @@ export default function App() {
           {marks && <BigCount value={hotspots.length} label="Locations on map" />}
         </section>
 
-        <aside className="feed" aria-label={selected ? "Location detail" : "Location feed"}>
-          {selected ? (
+        <aside className="feed" aria-label="Side panel">
+          <div className="tabs" role="tablist" aria-label="Side panel">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "feed"}
+              className={`tabs__tab ${tab === "feed" ? "is-active" : ""}`}
+              onClick={() => setTab("feed")}
+            >
+              {selected ? "Location" : "Feed"}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "ask"}
+              className={`tabs__tab ${tab === "ask" ? "is-active" : ""}`}
+              onClick={() => setTab("ask")}
+            >
+              Ask
+            </button>
+          </div>
+
+          {/* Kept mounted while hidden, so the conversation survives a look at
+              the feed. */}
+          <div hidden={tab !== "ask"} className="feed__pane">
+            <AskPanel context={askContext} onShow={handleFeedPick} />
+          </div>
+
+          {tab === "feed" && (selected ? (
             <DetailPanel
               detail={detail}
               loading={detailLoading}
@@ -346,7 +408,7 @@ export default function App() {
                 )}
               </div>
             </>
-          )}
+          ))}
         </aside>
       </main>
     </div>

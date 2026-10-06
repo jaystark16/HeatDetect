@@ -40,14 +40,20 @@ OSM industrial + landuse (Overpass) ├─► SQLite/Postgres ─► features �
 - `app/evidence.py` — evidence sentences built from real values, via templates.
 - `app/service.py` — data access plus the classification authority rules.
 - `app/main.py` — routing and request validation only.
+- `frontend/src/assistant/` — the Ask tab: intents and answers (deterministic), the
+  wording gate, and the optional in-browser model (WebLLM, Qwen3-1.7B).
 - `app/pipeline.py` — the CLI that runs ingestion, enrichment and feature stages.
 
 **Deterministic logic owns facts.** Distances, persistence, counts, filtering and
 thresholds are code, not model output. The model only estimates a class for a lone
 detection with no history.
 
-**There is no LLM in this system.** See `docs/adr/0007-no-llm.md`. Do not add one
-without a concrete task an LLM does better than a deterministic function.
+**No language model supplies a fact.** The one LLM is the optional on-device
+assistant (`docs/adr/0008-on-device-assistant.md`, narrowing ADR 0007). It may route a
+question to a fixed intent and reword the computed answer; code computes every value
+(`frontend/src/assistant/intents.ts`) and `verify.ts` withholds any wording with a
+number, source type or name the data does not contain. Do not widen its role, and do
+not add another model without a concrete task it does better than a deterministic function.
 
 ## Empirical facts established by measurement
 
@@ -97,6 +103,7 @@ backend/.venv/Scripts/python scripts/export_snapshot.py   # static snapshot for 
 # frontend
 cd frontend && npm run dev
 cd frontend && npm run typecheck && npm run build
+cd frontend && npm test                  # assistant intents and wording gate
 ```
 
 ## Conventions

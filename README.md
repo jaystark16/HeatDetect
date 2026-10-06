@@ -129,6 +129,25 @@ An ablation isolating how much is genuine thermal signal versus geography: [`doc
 
 ---
 
+## The Ask tab
+
+Plain-language questions beside the map — "what was detected in the last 24 hours?",
+"most persistent industrial sources", "anything near 23.75, 86.42?" — answered from the
+loaded data. Every answer is **computed** by code over fixed question types
+([`frontend/src/assistant/intents.ts`](frontend/src/assistant/intents.ts)) and lists the
+locations and facts it rests on, each linked to the map.
+
+An optional open-weight model (Qwen3-1.7B, Apache-2.0) can be loaded to word answers
+and understand unusual phrasing. It runs **in the browser** on the visitor's GPU via
+WebGPU: no server, no key, nothing typed leaves the device. It never supplies a value —
+a gate ([`verify.ts`](frontend/src/assistant/verify.ts)) withholds any wording with a
+number, a source type or a name the computed facts do not contain, and shows the
+computed answer instead, saying why. The first load downloads ~940 MB and took about
+8 minutes on the development laptop, so it is opt-in and the page says so first.
+Decision and measurements: [ADR 0008](docs/adr/0008-on-device-assistant.md).
+
+---
+
 ## Running it
 
 Requires Python 3.13+ and Node 24+. No Docker, no API keys, no hosting accounts.
