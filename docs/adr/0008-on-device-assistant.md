@@ -60,8 +60,24 @@ button that states the download size.
   only handles what keywords cannot place, which also saves the 5 s.
 - Wording quality: one of three answers was faithful and useful; one was commentary
   with no result; one called a location "the coal mine" because the question did.
-  Both failures led to the two newest gate rules (state the result; no source type the
-  data does not establish), each with a regression test built from the observed text.
+  Both failures led to gate rules (state the result; no source type the data does not
+  establish), each with a regression test built from the observed text.
+- On the deployed site, in a fresh browser with no cache: loaded in 348 s. Two worded
+  answers passed the gate as it then stood, and both carried a claim nothing computed:
+  "the most persistent, with the highest peak power" when another listed source peaked
+  higher, and "consistent with vegetation fire based on the thermal signature". Both are
+  now rejected: comparisons and reasons are allowed only where the computed answer
+  makes them, and lists are rejected. A region named without coordinates ("Punjab") was
+  correctly refused. A vague question ("where should an analyst look first?") was routed
+  to the open location; the routing prompt now restricts that intent.
+
+**What this adds up to.** Under the current gate, all five worded answers observed in
+testing would be withheld — four for real faults, one (a true comparison) because the
+rule cannot tell true comparisons from false ones. A 1.7B model routinely builds untrue
+claims from true numbers. Its wording therefore rarely reaches the screen, and that is
+the gate working as intended: the computed answer is shown, with the reason. The model's
+practical value here is routing unusual phrasing, not prose. A larger model, on-device
+or hosted, would be needed for wording that survives the gate.
 
 ## Consequences
 

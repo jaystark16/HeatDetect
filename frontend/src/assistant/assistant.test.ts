@@ -186,11 +186,50 @@ describe("the wording gate", () => {
 
   it("rejects adopting the question's assumption as fact (observed from the model)", () => {
     const observed =
-      `The computed answer indicates that the coal mine at 31.5 MW has the longest persistence. ` +
+      // Trimmed from the observed text, which also said "longest", so that this
+      // exercises the source-type rule on its own.
+      `The coal mine at ${top.latitude.toFixed(3)}° N heads the list. ` +
       `This location was detected on ${top.distinct_days} distinct days.`;
     const v = verifyWording(observed, a, "which coal mines have been burning the longest");
     expect(v.ok).toBe(false);
     expect(v.reason).toContain("coal");
+  });
+
+  it("rejects a false comparison built from true numbers (observed on the live site)", () => {
+    // Every number here is real; "the highest peak power" is not — another
+    // source in the same list peaks higher.
+    const observed =
+      `Of the ${a.summary.match(/Of ([\d,]+)/)![1]} persistent industrial sources, the top 5 are listed. ` +
+      `The source at ${top.latitude.toFixed(3)}° N, ${top.longitude.toFixed(3)}° E is the most persistent, ` +
+      "with the highest peak power and longest last seen time.";
+    const v = verifyWording(observed, a, "Which industrial sources are the most persistent?");
+    expect(v.ok).toBe(false);
+    expect(v.reason).toContain("highest");
+  });
+
+  it("rejects a list, which the model was told not to write (observed on the live site)", () => {
+    const observed = `Of the top 5:\n- ${top.latitude.toFixed(3)}° N, ${top.longitude.toFixed(3)}° E: seen on ${top.distinct_days} days.`;
+    expect(verifyWording(observed, a, "q").reason).toContain("list");
+  });
+
+  it("rejects a reason nothing computed (observed on the live site)", () => {
+    const detail = Object.values(snapshot.details).find(
+      (d) => d.classification.label === "natural_fire" && d.classification.source === "rule",
+    )!;
+    const explained = answer(intent("explain_selected"), ctx({ selected: detail }));
+    const observed =
+      `${detail.classification.display_label} at ${detail.latitude.toFixed(3)}° N, ${detail.longitude.toFixed(3)}° E. ` +
+      "The anomaly is consistent with vegetation fire based on the thermal signature.";
+    const v = verifyWording(observed, explained, "where should an analyst look first?");
+    expect(v.ok).toBe(false);
+    expect(v.reason).toContain("based on");
+  });
+
+  it("allows a comparison the computed answer itself makes", () => {
+    const strongest = answer(intent("strongest"), ctx());
+    const m = strongest.items[0].mark;
+    const text = `The strongest location peaked at ${m.frp_mw.toFixed(1)} MW, at ${m.latitude.toFixed(3)}° N.`;
+    expect(verifyWording(text, strongest, "where is the strongest heat?").ok).toBe(true);
   });
 
   it("allows a type word when the computed facts use it", () => {

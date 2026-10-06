@@ -109,7 +109,8 @@ Intents:
 - strongest: locations with the highest peak fire radiative power.
 - recent: locations detected in the last 24, 72 or 168 hours.
 - near: locations near coordinates the user gave as numbers.
-- explain_selected: why the location the user has open was classified as it was.
+- explain_selected: why the open location was classified as it was. Only when the
+  question refers to it ("this", "the selected", "the open one").
 - freshness: how current or up to date the data is.
 - model: how accurate or reliable the classifier is.
 - unsupported: anything else, including places named without coordinates.
@@ -192,7 +193,8 @@ Rules:
 - Use only the facts given. Do not add any number, place, name, cause or claim, and
   do not comment on what the data can or cannot show.
 - Call each location only what the facts call it, even if the question assumes more.
-- Do not explain causes or link one value to another.
+- Do not explain causes or link one value to another, and do not compare locations
+  unless the computed answer does.
 - A thermal anomaly is evidence of unusual heat, not proof of a fire. Keep hedged words
   such as "possible", "probable" and "consistent with". Never say "confirmed".
 - Two to four short sentences. Plain text, no lists, no markdown.`;

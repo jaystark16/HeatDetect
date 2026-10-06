@@ -30,6 +30,22 @@ const ALWAYS_ALLOWED = new Set(["NASA", "FIRMS", "India", "OpenStreetMap", "VIIR
 
 const MAX_LENGTH = 900;
 
+/** Lines formatted as a list. The prompt forbids lists; the model wrote one
+ * announcing "the top 5" and then listing two. */
+const LIST_LINE = /^\s*(?:[-*•]|\d+[.)])\s/m;
+
+/**
+ * Comparisons and reasons are claims about the data, and a model can build a
+ * false one from true numbers. Observed: "the most persistent, with the highest
+ * peak power", when another listed source peaked higher; and "consistent with
+ * vegetation fire based on the thermal signature", a reason nothing computed.
+ * Such words are allowed only where the computed answer already uses them.
+ */
+const COMPARATIVE =
+  /\b(highest|lowest|largest|smallest|biggest|strongest|weakest|longest|shortest|hottest|greatest|least|fewest|higher|lower|larger|smaller|stronger|weaker|longer|shorter|greater|hotter|more|fewer|less|than)\b/gi;
+const CAUSAL =
+  /\b(because|due to|based on|caused by|as a result|result of|suggests?|indicates?|implies|therefore|thus|hence|owing to|driven by|likely from)\b/gi;
+
 /**
  * What a source *is*. The data says "persistent industrial source"; calling it
  * a coal mine because the question did is the model adopting the asker's
@@ -115,8 +131,26 @@ export function verifyWording(text: string, answer: Answer, question: string): V
     };
   }
 
+  if (LIST_LINE.test(trimmed)) {
+    return { ok: false, reason: "it formatted a list, which it was told not to" };
+  }
+
   // Only what the computed material says, not what the visitor typed.
   const computed = [answer.title, answer.summary, ...answer.facts].join(" ").toLowerCase();
+  for (const [pattern, kind] of [
+    [COMPARATIVE, "a comparison"],
+    [CAUSAL, "a reason"],
+  ] as const) {
+    const used = [...new Set((trimmed.match(pattern) ?? []).map((w) => w.toLowerCase()))];
+    const added = used.filter((w) => !new RegExp(`\\b${w}\\b`).test(computed));
+    if (added.length) {
+      return {
+        ok: false,
+        reason: `it added ${kind} the computed answer does not make (${added.slice(0, 3).join(", ")})`,
+      };
+    }
+  }
+
   const typed = [...new Set((trimmed.match(TYPE_WORDS) ?? []).map((w) => w.toLowerCase()))];
   const unfounded = typed.filter((w) => !computed.includes(w));
   if (unfounded.length) {
