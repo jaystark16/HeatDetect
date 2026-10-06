@@ -37,9 +37,20 @@ def snapshot() -> dict:
     return json.loads(SNAPSHOT.read_text(encoding="utf-8"))
 
 
-def test_snapshot_is_labelled_as_cached_never_live(snapshot):
+def test_snapshot_is_labelled_as_a_file_never_a_live_query(snapshot):
     assert snapshot["kind"] == "cached_snapshot"
-    assert "not live data" in snapshot["note"].lower()
+    assert "not a live query" in snapshot["note"].lower()
+
+
+def test_snapshot_declares_whether_anything_refreshes_it(snapshot):
+    """The page decides between "near real time" and "cached snapshot" from
+    this block, so it must always be present and well-formed."""
+    refresh = snapshot["refresh"]
+    assert isinstance(refresh["scheduled"], bool)
+    if refresh["scheduled"]:
+        assert refresh["cadence_hours"] and refresh["cadence_hours"] > 0
+    else:
+        assert refresh["cadence_hours"] is None
 
 
 def test_snapshot_records_the_window_it_covers(snapshot):
@@ -150,10 +161,26 @@ def test_no_synthetic_dataset_is_present(snapshot):
     assert not synthetic, f"synthetic datasets in the shipped snapshot: {synthetic}"
 
 
-def test_summaries_carry_an_age_offset_not_a_frozen_timestamp(snapshot):
-    """Ages are rehydrated on load so relative filters stay meaningful; a frozen
-    absolute timestamp would make the demo look stale and break time filters."""
-    for summary in snapshot["summaries"][:20]:
-        assert "hours_ago" in summary
-        assert "acquired_at" not in summary
-        assert summary["hours_ago"] >= 0
+def test_timestamps_are_real_and_inside_the_declared_window(snapshot):
+    """Regression test for a fabrication bug.
+
+    The snapshot used to store each detection's age and the page rebuilt it as
+    "now minus age". On a 13-day-old file that dated a 19 September detection
+    2 October — after the window had ended — and "Last 24 hours" returned 57
+    detections that were two weeks old. Every timestamp must now be a real one,
+    and none may fall outside the window the snapshot itself declares.
+    """
+    from datetime import datetime  # noqa: PLC0415
+
+    window = snapshot["captured_window"]
+    oldest = datetime.fromisoformat(window["oldest_detection_at"])
+    newest = datetime.fromisoformat(window["newest_detection_at"])
+    built = datetime.fromisoformat(snapshot["generated_at"])
+
+    rows = list(snapshot["summaries"]) + list(snapshot["details"].values())
+    assert rows
+    for row in rows:
+        assert "hours_ago" not in row, "retired, fabrication-prone age field is back"
+        acquired = datetime.fromisoformat(row["acquired_at"].replace("Z", "+00:00"))
+        assert oldest <= acquired <= newest, f"{row['id']} dated outside the window"
+        assert acquired <= built, f"{row['id']} is dated after the snapshot was built"

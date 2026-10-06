@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 
+import type { FallbackMeta } from "../fallback";
 import type { DataMode, DatasetInfo, ModelInfo, Provenance } from "../types";
 
 interface Props {
@@ -7,17 +8,29 @@ interface Props {
   mode: DataMode;
   datasets: DatasetInfo[];
   model: ModelInfo | null;
-  snapshotWindow: { oldest: string | null; newest: string | null } | null;
+  /** Set when the data came from the snapshot file rather than the API. */
+  snapshot: FallbackMeta | null;
 }
 
 const MODE_COPY: Record<DataMode, { chip: string; className: string }> = {
   live: { chip: "● Live", className: "chip--live" },
+  // NASA's own name for this data class. It is not "Live": the page is reading
+  // a file a scheduled build wrote, and the line beside the chip says when.
+  near_real_time: { chip: "● Near real time", className: "chip--live" },
   historical: { chip: "◆ Historical", className: "chip--sample" },
   cached_snapshot: { chip: "◆ Cached snapshot", className: "chip--sample" },
 };
 
 function formatDate(value: string | null): string {
   return value ? new Date(value).toLocaleString() : "—";
+}
+
+/** "40 min", "5 h", "13 days" — whichever unit a person reads at a glance. */
+export function formatAge(hours: number | null): string {
+  if (hours === null || !Number.isFinite(hours)) return "unknown";
+  if (hours < 1) return `${Math.max(1, Math.round(hours * 60))} min`;
+  if (hours < 48) return `${Math.round(hours)} h`;
+  return `${Math.round(hours / 24)} days`;
 }
 
 /**
@@ -32,7 +45,7 @@ export default function ProvenanceBar({
   mode,
   datasets,
   model,
-  snapshotWindow,
+  snapshot,
 }: Props) {
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -58,18 +71,34 @@ export default function ProvenanceBar({
     };
   }, [open]);
 
-  const newest = snapshotWindow?.newest ?? provenance?.newest_detection_at ?? null;
-  const oldest = snapshotWindow?.oldest ?? provenance?.oldest_detection_at ?? null;
+  const newest = snapshot?.newestDetectionAt ?? provenance?.newest_detection_at ?? null;
+  const oldest = snapshot?.oldestDetectionAt ?? provenance?.oldest_detection_at ?? null;
+
+  let detailLine: string;
+  if (mode === "live") {
+    detailLine = `Newest detection ${formatAge(provenance?.age_of_newest_hours ?? null)} ago`;
+  } else if (mode === "near_real_time" && snapshot) {
+    // Both ages, because they answer different questions: is the pipeline
+    // keeping up, and when did a satellite last see something.
+    detailLine =
+      `Rebuilt from NASA FIRMS ${formatAge(snapshot.buildAgeHours)} ago · ` +
+      `newest detection ${formatAge(snapshot.newestAgeHours)} ago · ` +
+      `refreshes every ${snapshot.cadenceHours} h`;
+  } else if (mode === "cached_snapshot" && snapshot) {
+    detailLine =
+      `Data ${formatDate(oldest)} → ${formatDate(newest)} · ` +
+      (snapshot.scheduled
+        ? `last rebuilt ${formatAge(snapshot.buildAgeHours)} ago — scheduled refresh has fallen behind`
+        : `one-off build from ${formatAge(snapshot.buildAgeHours)} ago`);
+  } else {
+    detailLine = `Data window ${formatDate(oldest)} → ${formatDate(newest)}`;
+  }
 
   return (
     <div className="provenance" ref={containerRef}>
       <span className={`chip ${copy.className}`}>{copy.chip}</span>
 
-      <span className="topbar__sub">
-        {mode === "live"
-          ? `Newest detection ${provenance?.age_of_newest_hours?.toFixed(1)} h ago`
-          : `Data window ${formatDate(oldest)} → ${formatDate(newest)}`}
-      </span>
+      <span className="topbar__sub">{detailLine}</span>
 
       <button
         type="button"

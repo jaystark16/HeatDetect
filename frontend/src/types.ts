@@ -237,4 +237,11 @@ export interface Filters {
 }
 
 /** How the currently displayed data was obtained. Drives the provenance chip. */
-export type DataMode = "live" | "historical" | "cached_snapshot";
+/**
+ * How the displayed data was obtained, which the provenance chip states.
+ *
+ * `near_real_time` is a snapshot that a scheduled build is demonstrably keeping
+ * current. It is still a file, not a live query, and the chip text says so; it
+ * drops back to `cached_snapshot` by itself if the rebuilds stop.
+ */
+export type DataMode = "live" | "near_real_time" | "historical" | "cached_snapshot";

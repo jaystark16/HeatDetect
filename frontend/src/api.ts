@@ -32,6 +32,18 @@ import type {
 const BASE = (import.meta.env.VITE_API_BASE ?? "").replace(/\/$/, "");
 
 /**
+ * Whether there is an API to call at all.
+ *
+ * In development the Vite proxy forwards `/api`, so an empty base is right. In a
+ * production build an empty base means the static deployment, where `/api/...`
+ * resolves against github.io and 404s. Probing it anyway cost four failed
+ * requests on every page load and put red errors in the console for anyone who
+ * opened devtools, all to rediscover that no API exists. So the static build
+ * goes straight to the snapshot.
+ */
+export const API_CONFIGURED = import.meta.env.DEV || BASE !== "";
+
+/**
  * Render's free tier spins services down when idle and the first request after
  * that can take most of a minute. A short timeout would send every cold start
  * to the fallback and hide the real API.
@@ -168,6 +180,10 @@ async function withFallback<T, A extends unknown[]>(
   cached: (...args: A) => Promise<T>,
   ...args: A
 ): Promise<Loaded<T>> {
+  if (!API_CONFIGURED) {
+    const [data, snapshot] = await Promise.all([cached(...args), fallbackMeta()]);
+    return { data, fromSnapshot: true, snapshot };
+  }
   try {
     return { data: await live(...args), fromSnapshot: false, snapshot: null };
   } catch (apiError) {
@@ -207,7 +223,9 @@ export const api = {
    * says why, rather than silently returning nothing and looking broken.
    */
   search: (q: string, signal?: AbortSignal) =>
-    get<SearchResponse>("/api/search", new URLSearchParams({ q }), signal),
+    API_CONFIGURED
+      ? get<SearchResponse>("/api/search", new URLSearchParams({ q }), signal)
+      : Promise.reject(new ApiError("Search needs the API, and none is configured.")),
 
   /**
    * Detail for one detection.
@@ -217,6 +235,13 @@ export const api = {
    * rather than rendering an empty panel.
    */
   detail: async (id: string): Promise<Loaded<HotspotDetail | null>> => {
+    if (!API_CONFIGURED) {
+      const [data, snapshot] = await Promise.all([
+        fallbackDetail(id).catch(() => null),
+        fallbackMeta().catch(() => null),
+      ]);
+      return { data, fromSnapshot: true, snapshot };
+    }
     try {
       return {
         data: await get<HotspotDetail>(`/api/hotspots/${encodeURIComponent(id)}`),

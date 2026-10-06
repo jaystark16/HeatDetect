@@ -1,18 +1,24 @@
 /**
- * Offline fallback: a cached snapshot of real pipeline output.
+ * Snapshot data path: real pipeline output served as a static file.
  *
- * The static GitHub Pages deployment has no API to talk to, and a venue network
- * can fail during a demo. Rather than showing an error, the dashboard loads
- * `public/snapshot.json` — real NASA FIRMS detections enriched with
- * OpenStreetMap context, exported by `scripts/export_snapshot.py`.
+ * The GitHub Pages deployment has no API. It loads `public/snapshot.json` —
+ * real NASA FIRMS detections enriched with OpenStreetMap context, exported by
+ * `scripts/export_snapshot.py`. The Pages workflow rebuilds that file from FIRMS
+ * on a schedule; the copy committed to the repository is a manual build used for
+ * local development and as a last resort.
  *
- * Two things this is careful about:
+ * Three things this is careful about:
  *
- * 1. **It is fetched lazily, not imported.** Importing the JSON would inline
- *    ~1.8 MiB into the bundle for every visitor, including those whose API is
- *    working fine.
- * 2. **It is never described as live.** The snapshot carries the window it
- *    covers, and the UI labels it as cached with that window shown.
+ * 1. **Timestamps are the true acquisition times.** An earlier version rebuilt
+ *    each one as "now minus its age at export", which shifted every detection
+ *    forward by the age of the file — on a 13-day-old snapshot, a detection from
+ *    19 September displayed as 2 October, after the data window had ended.
+ * 2. **Freshness is measured, not assumed.** `freshness()` reports when the file
+ *    was built and whether anything rebuilds it, and the page labels itself from
+ *    that. A scheduled build that silently stops falls back to "cached snapshot"
+ *    on its own.
+ * 3. **It is fetched lazily, not imported.** Importing the JSON would inline
+ *    ~1.8 MiB into the bundle for every visitor.
  */
 
 import type {
@@ -25,9 +31,11 @@ import type {
   ModelInfo,
 } from "../types";
 
-/** Summaries store an age offset so relative filters stay meaningful. */
-type SnapshotSummary = Omit<HotspotSummary, "acquired_at"> & { hours_ago: number };
-type SnapshotDetail = Omit<HotspotDetail, "acquired_at"> & { hours_ago: number };
+interface SnapshotRefresh {
+  scheduled: boolean;
+  cadence_hours: number | null;
+  built_by: string;
+}
 
 interface Snapshot {
   kind: "cached_snapshot";
@@ -37,6 +45,8 @@ interface Snapshot {
     newest_detection_at: string | null;
   };
   note: string;
+  /** Absent from snapshots built before refresh metadata existed. */
+  refresh?: SnapshotRefresh;
   total_matching: number;
   coverage_note: string;
   surveyed_cells: number;
@@ -44,8 +54,8 @@ interface Snapshot {
   analytics: Analytics;
   model: ModelInfo;
   datasets: DatasetInfo[];
-  summaries: SnapshotSummary[];
-  details: Record<string, SnapshotDetail>;
+  summaries: HotspotSummary[];
+  details: Record<string, HotspotDetail>;
 }
 
 let cached: Snapshot | null = null;
@@ -58,11 +68,24 @@ async function load(): Promise<Snapshot> {
 
   inFlight = (async () => {
     // BASE_URL respects the deployment subpath (/HeatDetect/ on Pages).
-    const response = await fetch(`${import.meta.env.BASE_URL}snapshot.json`);
+    const response = await fetch(`${import.meta.env.BASE_URL}snapshot.json`, {
+      // The scheduled rebuild replaces this file every few hours; a cached copy
+      // from the browser's HTTP cache would quietly show older data.
+      cache: "no-cache",
+    });
     if (!response.ok) {
       throw new Error(`Snapshot unavailable (HTTP ${response.status})`);
     }
-    cached = (await response.json()) as Snapshot;
+    const parsed = (await response.json()) as Snapshot;
+
+    // Refuse the retired format rather than mis-date it. Its rows carry
+    // `hours_ago` instead of a real timestamp.
+    if (parsed.summaries.length > 0 && !parsed.summaries[0].acquired_at) {
+      throw new Error(
+        "Snapshot uses a retired format without real timestamps; rebuild it with scripts/export_snapshot.py.",
+      );
+    }
+    cached = parsed;
     return cached;
   })();
 
@@ -73,30 +96,63 @@ async function load(): Promise<Snapshot> {
   }
 }
 
-function hydrateSummary(record: SnapshotSummary, now: number): HotspotSummary {
-  const { hours_ago, ...rest } = record;
-  return {
-    ...rest,
-    acquired_at: new Date(now - hours_ago * 3_600_000).toISOString(),
-  };
+const HOUR_MS = 3_600_000;
+
+function hoursSince(iso: string | null, now = Date.now()): number | null {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  return Number.isFinite(t) ? Math.max(0, (now - t) / HOUR_MS) : null;
 }
 
-export interface FallbackMeta {
-  generatedAt: string;
+export interface SnapshotFreshness {
+  builtAt: string;
+  buildAgeHours: number;
   newestDetectionAt: string | null;
+  newestAgeHours: number | null;
   oldestDetectionAt: string | null;
+  scheduled: boolean;
+  cadenceHours: number | null;
+  /**
+   * True only while a scheduled rebuild is demonstrably keeping up.
+   *
+   * Judged on when the file was built, not on the newest detection: satellites
+   * do not observe continuously, so an up-to-date build can still have a newest
+   * detection several hours old during an overpass gap. One missed run is
+   * tolerated; two are not.
+   */
+  current: boolean;
+}
+
+export interface FallbackMeta extends SnapshotFreshness {
   coverageNote: string;
   note: string;
   detailCount: number;
   summaryCount: number;
 }
 
+function freshness(snapshot: Snapshot): SnapshotFreshness {
+  const buildAgeHours = hoursSince(snapshot.generated_at) ?? Number.POSITIVE_INFINITY;
+  const refresh = snapshot.refresh;
+  const scheduled = Boolean(refresh?.scheduled);
+  const cadenceHours = refresh?.cadence_hours ?? null;
+
+  return {
+    builtAt: snapshot.generated_at,
+    buildAgeHours,
+    newestDetectionAt: snapshot.captured_window.newest_detection_at,
+    newestAgeHours: hoursSince(snapshot.captured_window.newest_detection_at),
+    oldestDetectionAt: snapshot.captured_window.oldest_detection_at,
+    scheduled,
+    cadenceHours,
+    current:
+      scheduled && cadenceHours !== null && buildAgeHours <= cadenceHours * 2 + 1,
+  };
+}
+
 export async function fallbackMeta(): Promise<FallbackMeta> {
   const snapshot = await load();
   return {
-    generatedAt: snapshot.generated_at,
-    newestDetectionAt: snapshot.captured_window.newest_detection_at,
-    oldestDetectionAt: snapshot.captured_window.oldest_detection_at,
+    ...freshness(snapshot),
     coverageNote: snapshot.coverage_note,
     note: snapshot.note,
     detailCount: Object.keys(snapshot.details).length,
@@ -110,7 +166,7 @@ export async function fallbackHotspots(
 ): Promise<HotspotCollection> {
   const snapshot = await load();
   const now = Date.now();
-  let results = snapshot.summaries.map((s) => hydrateSummary(s, now));
+  let results = snapshot.summaries;
 
   if (filters.label !== "all") {
     results = results.filter((h) => h.label === filters.label);
@@ -122,9 +178,15 @@ export async function fallbackHotspots(
     results = results.filter((h) => h.distinct_days >= filters.minDistinctDays);
   }
   if (filters.withinHours !== "all") {
-    const cutoff = now - filters.withinHours * 3_600_000;
+    // Against the real clock. If the snapshot is old, "last 24 hours" is
+    // honestly empty — which the page explains — rather than quietly filled
+    // with detections from the snapshot's own last day.
+    const cutoff = now - filters.withinHours * HOUR_MS;
     results = results.filter((h) => Date.parse(h.acquired_at) >= cutoff);
   }
+
+  const fresh = freshness(snapshot);
+  const age = fresh.newestAgeHours;
 
   return {
     count: results.length,
@@ -134,13 +196,14 @@ export async function fallbackHotspots(
     hotspots: results,
     provenance: {
       data_source: "firms_open_archive",
-      generated_at: new Date().toISOString(),
-      newest_detection_at: snapshot.captured_window.newest_detection_at,
-      oldest_detection_at: snapshot.captured_window.oldest_detection_at,
-      age_of_newest_hours: null,
-      // A cached file is never live, regardless of how recent it looks.
+      generated_at: snapshot.generated_at,
+      newest_detection_at: fresh.newestDetectionAt,
+      oldest_detection_at: fresh.oldestDetectionAt,
+      age_of_newest_hours: age === null ? null : Math.round(age * 10) / 10,
+      // A file is never a live query, however recently it was built.
       is_live: false,
-      stale: true,
+      // Same 48-hour line the API uses.
+      stale: age === null || age > 48,
       surveyed_cells: snapshot.surveyed_cells,
       unsurveyed_cells: snapshot.unsurveyed_cells,
       coverage_note: snapshot.coverage_note,
@@ -163,18 +226,11 @@ export async function fallbackDatasets(): Promise<DatasetInfo[]> {
 /**
  * Detail for one detection, if the snapshot carries it.
  *
- * Only the most significant locations have full detail, to keep the file
+ * Only a class-balanced subset of locations has full detail, to keep the file
  * reasonable. Returning null lets the UI say so plainly instead of rendering a
  * half-empty panel that looks like missing data.
  */
 export async function fallbackDetail(id: string): Promise<HotspotDetail | null> {
   const snapshot = await load();
-  const record = snapshot.details[id];
-  if (!record) return null;
-
-  const { hours_ago, ...rest } = record;
-  return {
-    ...rest,
-    acquired_at: new Date(Date.now() - hours_ago * 3_600_000).toISOString(),
-  };
+  return snapshot.details[id] ?? null;
 }

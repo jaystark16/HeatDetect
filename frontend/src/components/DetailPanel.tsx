@@ -3,7 +3,7 @@ import type { EvidenceKind, HotspotDetail } from "../types";
 interface Props {
   detail: HotspotDetail | null;
   loading: boolean;
-  /** Set when the API was unreachable and detail came from the cached snapshot. */
+  /** Set when detail came from the snapshot file rather than the API. */
   fromSnapshot: boolean;
   /** Set when neither the API nor the snapshot had detail for this selection. */
   unavailable: boolean;
@@ -39,10 +39,9 @@ export default function DetailPanel({
       <aside className="panel panel--detail">
         <h2 className="detail__label">Detail unavailable</h2>
         <p className="detail__empty">
-          The API is unreachable, and the cached snapshot only carries full
-          evidence for the most significant locations. Select a recurring
-          hotspot — larger, thicker-outlined marks — or start the backend to see
-          detail for any detection.
+          This view is served from a snapshot file, which carries full evidence
+          for a class-balanced subset of locations to stay small. Select another
+          mark, or run the API to see detail for any detection.
         </p>
       </aside>
     );
@@ -97,7 +96,8 @@ export default function DetailPanel({
 
       {fromSnapshot && (
         <p className="detail__snapshot">
-          From the cached snapshot — the live API was not reachable.
+          From the snapshot file, not a live query. The timestamp is the real
+          acquisition time.
         </p>
       )}
 

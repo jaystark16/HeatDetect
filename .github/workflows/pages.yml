@@ -1,15 +1,37 @@
 name: Deploy dashboard to GitHub Pages
 
-# Publishes the React dashboard as a static site. With no API reachable it falls
-# back to the bundled sample snapshot, so this is a working demo on its own and
-# starts serving live data once VITE_API_BASE points at the Render service.
+# Rebuilds the data from NASA FIRMS and publishes the dashboard, every 3 hours.
+#
+# Why every 3 hours: FIRMS itself publishes near-real-time detections roughly
+# 3 hours after a satellite overpass, so refreshing more often would mostly
+# re-download the same files. This keeps the site as current as its source.
+#
+# Why rebuild instead of commit: the snapshot is ~1.8 MiB. Committing it eight
+# times a day would add gigabytes to the repository within a year. Each run
+# rebuilds the database from scratch on the runner — the pipeline needs no
+# credentials for this, because the FIRMS regional archives are open and the
+# OpenStreetMap tile cache is committed — and ships the result straight into
+# the Pages artifact. The snapshot in the repository stays as a manual build for
+# local development.
+#
+# Optional repository secret FIRMS_MAP_KEY: when present, each run also
+# backfills 60 days of history through the keyed endpoint, so persistence
+# baselines are long-term rather than one week. Without it the site still
+# refreshes, over the 7-day open-archive window.
 
 on:
   push:
     branches: [main]
     paths:
       - "frontend/**"
+      - "backend/app/**"
+      - "backend/models/**"
+      - "scripts/export_snapshot.py"
       - ".github/workflows/pages.yml"
+  schedule:
+    # Minute 17, not 0: scheduled runs at the top of the hour are the most
+    # likely to be delayed by GitHub's queue.
+    - cron: "17 */3 * * *"
   workflow_dispatch:
 
 permissions:
@@ -25,11 +47,65 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install pipeline dependencies
+        run: pip install -r backend/requirements.txt
+
+      # On a schedule, a failed refresh fails the job, so nothing is deployed and
+      # the previous — fresher — deployment stays live. On a code push it may
+      # fall through to the committed snapshot instead, which then labels itself
+      # as a one-off build rather than claiming to be current.
+      - name: Rebuild data from NASA FIRMS
+        id: refresh
+        continue-on-error: ${{ github.event_name != 'schedule' }}
+        working-directory: backend
+        env:
+          FIRMS_MAP_KEY: ${{ secrets.FIRMS_MAP_KEY }}
+          SNAPSHOT_REFRESH_HOURS: "3"
+          SNAPSHOT_BUILT_BY: github-actions
+        run: |
+          python -m app.pipeline ingest --window 7d
+
+          if [ -n "$FIRMS_MAP_KEY" ]; then
+            # Non-fatal: the 7-day window is still real, current data, and the
+            # persistence threshold scales to whatever window exists.
+            python -m app.pipeline backfill --days-back 60 \
+              || echo "::warning::Backfill failed; deploying the 7-day window only."
+          else
+            echo "::notice::No FIRMS_MAP_KEY secret; using the 7-day open-archive window."
+          fi
+
+          python -m app.pipeline features
+          python -m app.pipeline status
+          python ../scripts/export_snapshot.py
+
+      - name: Report what was built
+        if: steps.refresh.outcome == 'success'
+        run: |
+          python - <<'PY'
+          import json
+          from datetime import datetime, timezone
+          s = json.load(open("frontend/public/snapshot.json", encoding="utf-8"))
+          newest = datetime.fromisoformat(s["captured_window"]["newest_detection_at"])
+          age = (datetime.now(timezone.utc) - newest).total_seconds() / 3600
+          print(f"window   : {s['captured_window']['oldest_detection_at']} -> {newest.isoformat()}")
+          print(f"newest   : {age:.1f} h ago")
+          print(f"refresh  : {s['refresh']}")
+          print(f"locations: {len(s['summaries'])} summaries, {len(s['details'])} with detail")
+          PY
+
+      - name: Fell back to the committed snapshot
+        if: steps.refresh.outcome != 'success'
+        run: echo "::warning::Data refresh failed; this deploy carries the committed snapshot, which labels itself as a one-off build."
 
       - uses: actions/setup-node@v5
         with:
@@ -38,13 +114,15 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - run: npm ci
+        working-directory: frontend
 
       - name: Build
+        working-directory: frontend
         env:
           # Pages serves the site from /<repo>/, so assets need that prefix.
           BASE_PATH: /${{ github.event.repository.name }}/
-          # Repository variable, empty until the Render API exists. While empty
-          # the dashboard uses its bundled snapshot.
+          # Repository variable, empty until a hosted API exists. While empty
+          # the dashboard serves the snapshot built above and makes no API calls.
           VITE_API_BASE: ${{ vars.API_BASE_URL }}
         run: npm run build
 

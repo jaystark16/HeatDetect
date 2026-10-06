@@ -10,16 +10,27 @@ baselines and confidence scores were all invented. Nothing here is invented —
 every value is read from the database that the pipeline populated from NASA
 FIRMS and OpenStreetMap.
 
-The snapshot is labelled `cached_snapshot`, never `live`. It records the exact
-window it covers and when it was generated, so a viewer can tell how old it is.
-Detections are stored with an age offset so the relative time filters remain
-meaningful as the file ages, but `captured_at` always states the truth about
-when the data was actually collected.
+The snapshot is labelled `cached_snapshot`, never `live`: it is a file, not a
+query. It records the window it covers, when it was built, and whether anything
+rebuilds it on a schedule, so the page can say exactly how current it is.
+
+Timestamps are the **true acquisition times**. An earlier version stored each
+detection's age at export time and the page rebuilt it as "now minus age", so
+that a frozen demo would not look stale. That shifted every timestamp forward by
+the age of the file: on a 13-day-old snapshot a detection from 19 September was
+displayed as 2 October, after the data window had ended, and "Last 24 hours"
+returned 57 detections that were two weeks old. Never again.
+
+Environment:
+  SNAPSHOT_REFRESH_HOURS  set by the scheduled Pages workflow to its cadence.
+                          Unset means a manual, one-off build.
+  SNAPSHOT_BUILT_BY       free-text provenance, e.g. "github-actions".
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -94,14 +105,8 @@ def main() -> int:
     # Deterministic order so repeated exports of the same database are identical.
     selected.sort(key=lambda h: (-h.distinct_days, -h.frp_mw, h.id))
 
-    summaries = []
-    for h in selected:
-        payload = json.loads(h.model_dump_json())
-        payload["hours_ago"] = round(
-            (now - h.acquired_at).total_seconds() / 3600, 2
-        )
-        del payload["acquired_at"]
-        summaries.append(payload)
+    # True acquisition times, exactly as the database holds them.
+    summaries = [json.loads(h.model_dump_json()) for h in selected]
 
     # Detail is spread across classes too, so an offline user can inspect a
     # vegetation fire and an industrial source, not only the persistent ones.
@@ -115,12 +120,22 @@ def main() -> int:
         detail = get_hotspot_detail(engine, h.id, trained)
         if detail is None:
             continue
-        payload = json.loads(detail.model_dump_json())
-        payload["hours_ago"] = round(
-            (now - detail.acquired_at).total_seconds() / 3600, 2
-        )
-        del payload["acquired_at"]
-        details[h.id] = payload
+        details[h.id] = json.loads(detail.model_dump_json())
+
+    # Whether anything rebuilds this file. The page uses this, together with
+    # `generated_at`, to decide between "near real time" and "cached snapshot",
+    # so a scheduled build that silently stops degrades to the honest label on
+    # its own instead of advertising freshness it no longer has.
+    cadence = os.environ.get("SNAPSHOT_REFRESH_HOURS", "").strip()
+    refresh = (
+        {
+            "scheduled": True,
+            "cadence_hours": float(cadence),
+            "built_by": os.environ.get("SNAPSHOT_BUILT_BY", "scheduled build"),
+        }
+        if cadence
+        else {"scheduled": False, "cadence_hours": None, "built_by": "manual build"}
+    )
 
     snapshot = {
         "kind": "cached_snapshot",
@@ -138,9 +153,11 @@ def main() -> int:
             ),
         },
         "note": (
-            "Real NASA FIRMS detections enriched with OpenStreetMap context, "
-            "captured at the time above. This is a cached snapshot, not live data."
+            "Real NASA FIRMS detections enriched with OpenStreetMap context. "
+            "This file is a snapshot built by the pipeline, not a live query; "
+            "every timestamp is the true satellite acquisition time."
         ),
+        "refresh": refresh,
         "total_matching": collection.total_matching,
         "summary_selection": "per-class quotas; see CLASS_QUOTAS in scripts/export_snapshot.py",
         "coverage_note": collection.provenance.coverage_note,

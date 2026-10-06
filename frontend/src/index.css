@@ -188,13 +188,25 @@ body {
   min-height: 0;
 }
 
-.map__notice {
+/* Notices stack in one column. Each used to be absolutely positioned at the
+   same spot, so two at once — "API unreachable" and the snapshot-subset note —
+   rendered exactly on top of each other and only one was ever readable. */
+.map__notices {
   position: absolute;
   top: var(--s3);
   /* Inset to clear Leaflet's own controls: zoom top-left, layers top-right. */
   left: 56px;
   right: 56px;
   z-index: 500; /* over Leaflet panes, under its controls at 1000 */
+  display: flex;
+  flex-direction: column;
+  gap: var(--s2);
+  /* The column spans the map; only the notices themselves take clicks. */
+  pointer-events: none;
+}
+
+.map__notice {
+  pointer-events: auto;
   padding: var(--s2) var(--s3);
   border-radius: var(--radius);
   font-size: 12.5px;
@@ -207,6 +219,13 @@ body {
 .map__notice--error {
   color: var(--status-critical);
   border-color: color-mix(in oklab, var(--status-critical) 45%, transparent);
+}
+
+/* Informational, not a warning: current data on a static deployment is the
+   normal state, and painting it warning-yellow would cry wolf. */
+.map__notice--info {
+  color: var(--ink-secondary);
+  border-color: var(--hairline);
 }
 
 /* ------------------------------------------------------------- stat row -- */

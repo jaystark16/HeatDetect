@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { api } from "./api";
+import { API_CONFIGURED, api } from "./api";
+import { formatAge } from "./components/ProvenanceBar";
+import type { FallbackMeta } from "./fallback";
 import DetailPanel from "./components/DetailPanel";
 import FilterPanel from "./components/FilterPanel";
 import MapView, { type FocusTarget } from "./components/MapView";
@@ -45,10 +47,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [fromSnapshot, setFromSnapshot] = useState(false);
-  const [snapshotWindow, setSnapshotWindow] = useState<{
-    oldest: string | null;
-    newest: string | null;
-  } | null>(null);
+  const [snapshot, setSnapshot] = useState<FallbackMeta | null>(null);
 
   // Load metadata once; it does not depend on filters.
   useEffect(() => {
@@ -75,14 +74,7 @@ export default function App() {
       setMarkProvenance(marksResult.data.provenance);
       setAnalytics(stats.data);
       setFromSnapshot(marksResult.fromSnapshot);
-      setSnapshotWindow(
-        marksResult.snapshot
-          ? {
-              oldest: marksResult.snapshot.oldestDetectionAt,
-              newest: marksResult.snapshot.newestDetectionAt,
-            }
-          : null,
-      );
+      setSnapshot(marksResult.snapshot);
     } catch (cause) {
       // Both the API and the snapshot failed. Showing an error is correct here —
       // there is no data, and inventing a placeholder would be worse than saying so.
@@ -132,11 +124,20 @@ export default function App() {
 
   const provenance = markProvenance ?? analytics?.provenance ?? null;
 
+  // Freshness is measured from the snapshot itself: a scheduled build only
+  // counts as near-real-time while it is demonstrably keeping up.
   const mode: DataMode = fromSnapshot
-    ? "cached_snapshot"
+    ? snapshot?.current
+      ? "near_real_time"
+      : "cached_snapshot"
     : provenance?.is_live
       ? "live"
       : "historical";
+
+  const builtOn = snapshot ? new Date(snapshot.builtAt).toLocaleString() : null;
+  const newestOn = snapshot?.newestDetectionAt
+    ? new Date(snapshot.newestDetectionAt).toLocaleString()
+    : null;
 
   const hotspots = marks ?? [];
   // /api/locations returns every matching cell, so the map is complete.
@@ -159,45 +160,76 @@ export default function App() {
           mode={mode}
           datasets={datasets}
           model={model}
-          snapshotWindow={snapshotWindow}
+          snapshot={fromSnapshot ? snapshot : null}
         />
       </header>
 
       <FilterPanel filters={filters} analytics={analytics} onChange={setFilters} />
 
       <div className="map">
-        {loading && !marks && (
-          <div className="map__notice">
-            Loading detections… if the API has been idle it may be starting up,
-            which can take up to a minute.
-          </div>
-        )}
+        <div className="map__notices">
+          {loading && !marks && (
+            <div className="map__notice map__notice--info">
+              {API_CONFIGURED
+                ? "Loading detections… if the API has been idle it may be starting up, which can take up to a minute."
+                : "Loading detections…"}
+            </div>
+          )}
 
-        {error && <div className="map__notice map__notice--error">{error}</div>}
+          {error && <div className="map__notice map__notice--error">{error}</div>}
 
-        {fromSnapshot && !error && (
-          <div className="map__notice">
-            API unreachable — showing a cached snapshot of real FIRMS data. Not
-            live.
-          </div>
-        )}
+          {/* Worded for what actually happened. A static deployment has no API
+              by design; telling its visitors "API unreachable" described a
+              failure that was not occurring. */}
+          {fromSnapshot && !error && snapshot && (
+            <div
+              className={`map__notice ${
+                mode === "near_real_time" ? "map__notice--info" : ""
+              }`}
+            >
+              {!API_CONFIGURED && mode === "near_real_time" &&
+                `Static deployment, rebuilt from NASA FIRMS every ${snapshot.cadenceHours} h. ` +
+                  "Search, and full detail for every location, need the API."}
+              {/* Current-ness is judged from the newest detection, with the
+                  same 48-hour line the API uses. A one-off build made minutes ago
+                  holds today's data; calling it "not current" was wrong. */}
+              {!API_CONFIGURED && mode !== "near_real_time" &&
+                (snapshot.scheduled
+                  ? `Scheduled refresh has fallen behind: this data was last rebuilt ${formatAge(snapshot.buildAgeHours)} ago.`
+                  : `One-off build from ${formatAge(snapshot.buildAgeHours)} ago that does not refresh itself` +
+                    (snapshot.newestAgeHours != null && snapshot.newestAgeHours > 48
+                      ? `; its newest detection is ${formatAge(snapshot.newestAgeHours)} old, so it is no longer current.`
+                      : "."))}
+              {API_CONFIGURED &&
+                `API unreachable — showing the last snapshot, built ${builtOn}` +
+                  (snapshot.newestAgeHours != null && snapshot.newestAgeHours > 48
+                    ? `; its newest detection is ${formatAge(snapshot.newestAgeHours)} old.`
+                    : ".")}
+            </div>
+          )}
 
-        {!loading && marks && hotspots.length === 0 && !error && (
-          <div className="map__notice">
-            No detections match these filters. Narrow time ranges can
-            legitimately be empty.
-          </div>
-        )}
+          {!loading && marks && hotspots.length === 0 && !error && (
+            <div className="map__notice">
+              {fromSnapshot &&
+              filters.withinHours !== "all" &&
+              snapshot?.newestAgeHours != null &&
+              snapshot.newestAgeHours > filters.withinHours
+                ? `No detections in the last ${filters.withinHours} hours. The newest detection in this data is from ${newestOn}, ${formatAge(snapshot.newestAgeHours)} ago.`
+                : "No detections match these filters. Narrow time ranges can legitimately be empty."}
+            </div>
+          )}
 
-        {/* The map draws a class-balanced sample, not everything. Saying so is
-            the difference between a readable map and a misleading one. */}
-        {!loading && truncated && !error && (
-          <div className="map__notice">
-            Cached snapshot: showing {hotspots.length.toLocaleString()}{" "}
-            locations from {totalMatching.toLocaleString()} recorded detections.
-            Counts in the panels below are for the full set.
-          </div>
-        )}
+          {/* The snapshot carries a class-balanced subset, not everything.
+              Saying so is the difference between a readable map and a
+              misleading one. */}
+          {!loading && truncated && !error && (
+            <div className="map__notice map__notice--info">
+              Snapshot: showing {hotspots.length.toLocaleString()} locations from{" "}
+              {totalMatching.toLocaleString()} recorded detections. Counts in the
+              panels below are for the full set.
+            </div>
+          )}
+        </div>
 
         <MapView
           hotspots={hotspots}
