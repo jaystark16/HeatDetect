@@ -58,10 +58,9 @@ export type Palette = Record<ThermalClass, { stroke: string; fill: string }>;
 /**
  * Resolve the palette to concrete colours.
  *
- * Leaflet is run with `preferCanvas`, which is necessary at these data volumes
- * — a few thousand SVG paths makes panning unusable. Canvas rendering cannot
- * use CSS classes, so colours have to be read out of the custom properties once
- * and handed to Leaflet as values. The stylesheet stays the single source of
+ * The map draws with WebGL, which is what keeps tens of thousands of marks
+ * smooth, and WebGL cannot use CSS classes. So colours are read out of the
+ * custom properties once and handed to the map as values. The stylesheet stays the single source of
  * truth; this is the only place that reads it.
  */
 export function resolvePalette(root: HTMLElement = document.documentElement): Palette {

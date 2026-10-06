@@ -25,7 +25,7 @@ All user-facing copy stays hedged: "possible", "candidate", "consistent with".
 
 ```
 FIRMS regional CSV (open, no key)  ─┐
-OSM industrial + landuse (Overpass) ├─► SQLite/Postgres ─► features ─► classify ─► API ─► React/Leaflet
+OSM industrial + landuse (Overpass) ├─► SQLite/Postgres ─► features ─► classify ─► API ─► React/MapLibre
                                     ─┘                     (deterministic)  (rules + model)
 ```
 

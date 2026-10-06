@@ -281,7 +281,7 @@ h3 {
   position: absolute;
   top: var(--s5);
   left: var(--s5);
-  z-index: 500; /* over Leaflet panes, under its controls at 1000 */
+  z-index: 3; /* over the map canvas */
   border-radius: var(--radius-lg);
   padding: var(--s3) var(--s3) var(--s2);
   width: 264px;
@@ -301,7 +301,7 @@ h3 {
   position: absolute;
   left: var(--s5);
   bottom: var(--s5);
-  z-index: 500;
+  z-index: 3;
   display: flex;
   align-items: center;
   gap: var(--s2);
@@ -317,9 +317,9 @@ h3 {
 .overlay--count {
   position: absolute;
   right: var(--s5);
-  /* Clears Leaflet's attribution strip. */
+  /* Clears the attribution control. */
   bottom: 36px;
-  z-index: 500;
+  z-index: 3;
   text-align: right;
   pointer-events: none;
 }
@@ -1232,66 +1232,115 @@ h3 {
   color: var(--status-critical);
 }
 
-/* -------------------------------------------------------------- leaflet -- */
+/* ------------------------------------------------------------------ map -- */
 
-.leaflet-container {
-  background: var(--ink);
-  font-family: var(--font-body);
+.mapview,
+.mapview__canvas {
+  position: absolute;
+  inset: 0;
 }
 
-.leaflet-container .leaflet-tooltip {
-  font-family: var(--font-body);
-  font-size: 12px;
-  color: var(--ink-primary);
-  background: var(--surface);
-  border: 1px solid var(--hairline-strong);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+.mapview__canvas {
+  /* Space behind the globe. */
+  background: radial-gradient(circle at 50% 45%, #14141a 0%, var(--ink) 70%);
 }
 
-.leaflet-container .leaflet-tooltip-top::before {
-  border-top-color: var(--surface);
+/* The canvas takes keyboard focus. An outer ring would be clipped on three
+   sides and show as a stray line along the feed's edge, so it sits inside. */
+.mapview .maplibregl-canvas:focus-visible {
+  outline: 2px solid var(--flare);
+  outline-offset: -2px;
+  box-shadow: none;
 }
 
-.leaflet-bar,
-.leaflet-control-layers {
-  border: 1px solid var(--hairline) !important;
-  border-radius: var(--radius) !important;
-  overflow: hidden;
-  box-shadow: none !important;
+.maplibregl-ctrl-top-right {
+  top: var(--s3);
+  right: var(--s3);
 }
 
-.leaflet-bar a,
-.leaflet-control-layers {
+.maplibregl-ctrl-group {
   background: color-mix(in oklab, var(--surface) 92%, transparent) !important;
-  color: var(--ink-primary) !important;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius) !important;
+  box-shadow: none !important;
+  overflow: hidden;
 }
 
-.leaflet-bar a {
-  border-bottom-color: var(--hairline) !important;
+.maplibregl-ctrl-group button + button {
+  border-top: 1px solid var(--hairline) !important;
 }
 
-.leaflet-bar a:hover {
+.maplibregl-ctrl-group button:hover {
   background: var(--surface-2) !important;
 }
 
-.leaflet-control-layers-expanded {
-  padding: var(--s2) var(--s3);
-  font-size: 12.5px;
+/* MapLibre's icons are dark glyphs drawn for a light control. */
+.maplibregl-ctrl-group .maplibregl-ctrl-icon {
+  filter: invert(1);
 }
 
-.leaflet-control-layers-separator {
-  border-top-color: var(--hairline);
+.map-switch {
+  position: absolute;
+  top: var(--s3);
+  right: 56px;
+  z-index: 2;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-pill);
+  background: color-mix(in oklab, var(--surface) 92%, transparent);
 }
 
-.leaflet-container .leaflet-control-attribution {
-  background: color-mix(in oklab, var(--ink) 70%, transparent);
+.map-switch button {
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-secondary);
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-pill);
+  padding: 4px var(--s3);
+  cursor: pointer;
+}
+
+.map-switch button:hover {
+  color: var(--ink-primary);
+}
+
+.map-switch button.is-active {
+  color: var(--ink);
+  background: var(--flare);
+}
+
+.maplibregl-ctrl-attrib {
+  background: color-mix(in oklab, var(--ink) 75%, transparent) !important;
   color: var(--ink-muted);
   font-size: 10px;
 }
 
-.leaflet-container .leaflet-control-attribution a {
+.maplibregl-ctrl-attrib a {
   color: var(--ink-secondary);
+}
+
+.maplibregl-ctrl-attrib-button {
+  filter: invert(1);
+}
+
+.map-tip .maplibregl-popup-content {
+  font-family: var(--font-body);
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--ink-primary);
+  background: var(--surface);
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-sm);
+  padding: var(--s2) var(--s3);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.5);
+}
+
+.map-tip .maplibregl-popup-tip {
+  display: none;
 }
 
 /* ------------------------------------------------------------ responsive -- */
@@ -1369,6 +1418,15 @@ h3 {
     bottom: var(--s3);
   }
 
+  /* The legend spans the top of a phone-width map; the switch moves clear of
+     it, just above the region chip. */
+  .map-switch {
+    top: auto;
+    right: auto;
+    left: var(--s3);
+    bottom: 60px;
+  }
+
   .legend__hint,
   .overlay--region .overlay__muted {
     display: none;
@@ -1393,11 +1451,4 @@ h3 {
   .status-pill__ping {
     display: none;
   }
-}
-
-/* Leaflet's container takes keyboard focus. The shared outer ring would be
-   clipped on three sides and show as a stray line along the feed's edge, so
-   the map draws its ring inside. */
-.leaflet-container:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--flare);
 }

@@ -55,14 +55,14 @@ OpenStreetMap via Overpass (cached, committed)
           └──► RandomForest (single-observation fallback only)
           │
           ▼
-   FastAPI  ──►  React + Leaflet dashboard
+   FastAPI  ──►  React + MapLibre dashboard
 ```
 
 **Observed, derived and inferred data are physically separate** — different tables, different API objects, different visual treatment. A measurement can never be rendered as an inference by accident.
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 19 + Vite + TypeScript + Leaflet |
+| Frontend | React 19 + Vite + TypeScript + MapLibre GL (globe, WebGL) |
 | Backend | Python 3.13 + FastAPI + SQLAlchemy Core |
 | ML | scikit-learn RandomForest |
 | Database | SQLite by default; Postgres when `DATABASE_URL` is set |
