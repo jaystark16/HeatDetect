@@ -50,6 +50,20 @@ type Basemap = "satellite" | "street";
 
 const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services";
 
+const TERRAIN_TILES =
+  "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+const TERRAIN_ATTRIBUTION =
+  'Elevation: <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md">' +
+  "SRTM, GMTED2010 (USGS), ETOPO1 (NOAA) and others</a>";
+
+/**
+ * Relief is real elevation, exaggerated so it reads at regional zoom: the
+ * Himalaya stand out at 1x, but the Deccan and the coalfield plateaus vanish.
+ * Marks are drawn on the surface either way, so no position changes.
+ */
+const TERRAIN_EXAGGERATION = 1.5;
+const TERRAIN_PITCH = 60;
+
 /**
  * A globe, not a flat map.
  *
@@ -66,6 +80,12 @@ const STYLE: StyleSpecification = {
   // flattens, where a halo would just tint the edges of the map.
   sky: {
     "atmosphere-blend": ["interpolate", ["linear"], ["zoom"], 0, 1, 4, 0.8, 7, 0],
+    // Seen when the camera tilts for 3D terrain: a dusk horizon instead of a
+    // hard edge against black. No fog: MapLibre does not support it on the
+    // globe and warns every time terrain is switched on.
+    "sky-color": "#0d1b2e",
+    "horizon-color": "#31465f",
+    "sky-horizon-blend": 0.6,
   },
   sources: {
     satellite: {
@@ -90,11 +110,38 @@ const STYLE: StyleSpecification = {
       maxzoom: 18,
       attribution: "Labels &copy; Esri",
     },
+    // Elevation: AWS Terrain Tiles, open data with no key. Two sources over the
+    // same tiles because MapLibre renders hillshade poorly from the source that
+    // also drives 3D terrain. Over India the data is SRTM and GMTED2010 (USGS)
+    // and ETOPO1 (NOAA); the full required attribution is linked.
+    terrain: {
+      type: "raster-dem",
+      tiles: [TERRAIN_TILES],
+      tileSize: 256,
+      maxzoom: 15,
+      encoding: "terrarium",
+      attribution: TERRAIN_ATTRIBUTION,
+    },
+    relief: {
+      type: "raster-dem",
+      tiles: [TERRAIN_TILES],
+      tileSize: 256,
+      maxzoom: 15,
+      encoding: "terrarium",
+    },
   },
   layers: [
     { id: "background", type: "background", paint: { "background-color": "#0a0a0b" } },
     { id: "satellite", type: "raster", source: "satellite" },
     { id: "street", type: "raster", source: "street", layout: { visibility: "none" } },
+    // Relief shading for the street map; satellite imagery already shows it.
+    {
+      id: "relief",
+      type: "hillshade",
+      source: "relief",
+      layout: { visibility: "none" },
+      paint: { "hillshade-exaggeration": 0.35, "hillshade-shadow-color": "#3b3326" },
+    },
     { id: "labels", type: "raster", source: "labels", paint: { "raster-opacity": 0.75 } },
   ],
 };
@@ -138,6 +185,7 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
   const [ready, setReady] = useState(false);
   const [basemap, setBasemap] = useState<Basemap>("satellite");
   const [labels, setLabels] = useState(true);
+  const [relief3d, setRelief3d] = useState(false);
 
   // Map event handlers are registered once, so they read these through refs
   // rather than capturing whatever was current at mount.
@@ -160,12 +208,14 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
       renderWorldCopies: false,
       // Far enough out to see the whole globe, not so far it shrinks to a dot.
       minZoom: 1,
-      // Tilting adds nothing to point data and makes marks harder to compare.
-      maxPitch: 0,
-      dragRotate: false,
-      touchPitch: false,
+      // Tilt is for reading terrain. Right-drag or two fingers tilt and turn;
+      // the compass puts north up and the camera flat again.
+      maxPitch: 75,
     });
-    map.addControl(new NavigationControl({ showCompass: false }), "top-right");
+    map.addControl(
+      new NavigationControl({ showCompass: true, visualizePitch: true }),
+      "top-right",
+    );
     map.addControl(new GlobeControl(), "top-right");
     map.addControl(new AttributionControl({ compact: true }), "bottom-right");
 
@@ -251,6 +301,7 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
       tip.remove();
       map.remove();
       mapRef.current = null;
+      terrainOn.current = false;
       setReady(false);
     };
   }, []);
@@ -353,6 +404,7 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
     if (!ready || !map) return;
     map.setLayoutProperty("satellite", "visibility", basemap === "satellite" ? "visible" : "none");
     map.setLayoutProperty("street", "visibility", basemap === "street" ? "visible" : "none");
+    map.setLayoutProperty("relief", "visibility", basemap === "street" ? "visible" : "none");
     // OSM tiles carry their own names; Esri's labels are for imagery.
     map.setLayoutProperty(
       "labels",
@@ -360,6 +412,26 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
       labels && basemap === "satellite" ? "visible" : "none",
     );
   }, [ready, basemap, labels]);
+
+  // Off by default: a flat, top-down view is the honest one for comparing
+  // marks, and terrain costs extra downloads. On demand it raises the ground
+  // and tilts the camera so the relief is actually visible.
+  const terrainOn = useRef(false);
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!ready || !map) return;
+    // Only act on a change. Running "off" at load would cancel the opening
+    // fly-in from the globe.
+    if (relief3d === terrainOn.current) return;
+    terrainOn.current = relief3d;
+    if (relief3d) {
+      map.setTerrain({ source: "terrain", exaggeration: TERRAIN_EXAGGERATION });
+      map.easeTo({ pitch: TERRAIN_PITCH, duration: 1200 });
+    } else {
+      map.setTerrain(null);
+      map.easeTo({ pitch: 0, bearing: 0, duration: 800 });
+    }
+  }, [ready, relief3d]);
 
   return (
     <div className="mapview">
@@ -391,6 +463,15 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
             Labels
           </button>
         )}
+        <button
+          type="button"
+          className={relief3d ? "is-active" : ""}
+          aria-pressed={relief3d}
+          title="Raise real elevation and tilt the view"
+          onClick={() => setRelief3d((v) => !v)}
+        >
+          3D terrain
+        </button>
       </div>
     </div>
   );
