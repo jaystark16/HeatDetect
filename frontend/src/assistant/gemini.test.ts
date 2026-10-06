@@ -8,7 +8,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { handle, MODELS } from "../../../proxy/worker.mjs";
+import { handle, MODELS, RETRY_DELAYS_MS } from "../../../proxy/worker.mjs";
 import { locationToMark } from "../api";
 import type { Analytics, LocationSummary, MapMark, ModelInfo } from "../types";
 import { buildBriefing, renderFacts } from "./briefing";
@@ -226,17 +226,55 @@ describe("the proxy", () => {
     expect(await r.text()).not.toContain("test-key");
   });
 
-  it("falls back past overloaded models and reports which answered", async () => {
+  const noWait = async () => {};
+  const modelOf = (u: string) => u.split("/models/")[1].split(":")[0];
+
+  it("retries a busy model before falling back, preferring the stronger answer", async () => {
     const calls: string[] = [];
-    const r = await handle(post(), env, (async (u: string) => {
-      calls.push(u);
-      return calls.length < 3 ? google(503) : google(200);
-    }) as unknown as typeof fetch);
+    const r = await handle(
+      post(),
+      env,
+      (async (u: string) => {
+        calls.push(modelOf(u));
+        return calls.length < 3 ? google(503) : google(200);
+      }) as unknown as typeof fetch,
+      noWait,
+    );
     const j = await r.json();
     expect(r.status).toBe(200);
-    // The first two models were overloaded, so the third answered.
-    expect(j.model).toBe(MODELS[2]);
-    expect(j.tried.map((t: { status: number }) => t.status)).toEqual([503, 503]);
+    // Busy twice, then answered: still the first (strongest) model.
+    expect(calls).toEqual([MODELS[0], MODELS[0], MODELS[0]]);
+    expect(j.model).toBe(MODELS[0]);
+  });
+
+  it("moves to the next model once a busy one has used its retries", async () => {
+    const calls: string[] = [];
+    const r = await handle(
+      post(),
+      env,
+      (async (u: string) => {
+        calls.push(modelOf(u));
+        return modelOf(u) === MODELS[0] ? google(503) : google(200);
+      }) as unknown as typeof fetch,
+      noWait,
+    );
+    const j = await r.json();
+    expect(calls.filter((m) => m === MODELS[0])).toHaveLength(RETRY_DELAYS_MS.length + 1);
+    expect(j.model).toBe(MODELS[1]);
+  });
+
+  it("does not retry a retired model", async () => {
+    const calls: string[] = [];
+    await handle(
+      post(),
+      env,
+      (async (u: string) => {
+        calls.push(modelOf(u));
+        return modelOf(u) === MODELS[0] ? google(404) : google(200);
+      }) as unknown as typeof fetch,
+      noWait,
+    );
+    expect(calls).toEqual([MODELS[0], MODELS[1]]);
   });
 
   it("stops at a request Google rejects as malformed", async () => {

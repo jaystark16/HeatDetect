@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { buildBriefing, type Fact } from "../assistant/briefing";
-import { askGemini, GEMINI_CONFIGURED, type GeminiAnswer } from "../assistant/gemini";
+import { askGemini, GEMINI_CONFIGURED, type Depth, type GeminiAnswer } from "../assistant/gemini";
 import {
   answer as computeAnswer,
   keywordRoute,
@@ -49,6 +49,10 @@ interface LocalTurn {
 }
 
 type Turn = GeminiTurn | LocalTurn;
+
+/** Replies that accept the offer of a deeper analysis. */
+const AFFIRMATIVE =
+  /^(y|yes|yeah|yep|yup|sure|ok|okay|please|go ahead|go deep|go deeper|deeper|deep|deep research|tell me more|more|explain|explain more|elaborate)[\s.!?]*$/i;
 
 const SUGGESTIONS = [
   "Give me an overall analysis of what the data shows",
@@ -152,9 +156,19 @@ export default function AskPanel({ context, onShow }: Props) {
   );
 
   const ask = useCallback(
-    async (question: string) => {
-      const q = question.trim();
+    async (question: string, forceDepth?: Depth) => {
+      let q = question.trim();
       if (!q || !context || busy) return;
+
+      // "yes", "go deeper", "tell me more" after a short answer means: the
+      // deep version of the previous question.
+      let depth: Depth = forceDepth ?? "brief";
+      const last = turns[turns.length - 1];
+      if (!forceDepth && last?.kind === "gemini" && last.result.depth === "brief" && AFFIRMATIVE.test(q)) {
+        q = last.question;
+        depth = "deep";
+      }
+
       setBusy(true);
       setDraft("");
 
@@ -162,7 +176,7 @@ export default function AskPanel({ context, onShow }: Props) {
       if (GEMINI_CONFIGURED) {
         const briefing = buildBriefing(q, context);
         try {
-          const result = await askGemini(q, briefing);
+          const result = await askGemini(q, briefing, depth);
           turn = {
             kind: "gemini",
             id: nextId.current++,
@@ -184,7 +198,7 @@ export default function AskPanel({ context, onShow }: Props) {
       setTurns((t) => [...t, turn]);
       setBusy(false);
     },
-    [askLocally, busy, context],
+    [askLocally, busy, context, turns],
   );
 
   const suggestions = context?.selected
@@ -196,11 +210,8 @@ export default function AskPanel({ context, onShow }: Props) {
       <div className="ask__intro">
         {GEMINI_CONFIGURED ? (
           <p>
-            Answers are written by <strong>Google Gemini</strong> from a briefing of numbered
-            facts this page computes from the live data and HeatDetect's own analysis. Every
-            sentence cites the facts it rests on and is checked against them before it is
-            shown. Your question and the briefing are sent to Google's Gemini API through
-            HeatDetect's server.
+            Short, cited answers by <strong>Google Gemini</strong>, checked against the
+            data. Questions are sent to Gemini through HeatDetect's server.
           </p>
         ) : (
           <p>
@@ -404,23 +415,24 @@ function GeminiTurnView({
 }: {
   turn: GeminiTurn;
   onShow: (mark: MapMark) => void;
-  onAsk: (q: string) => void;
+  onAsk: (q: string, depth?: Depth) => void;
   busy: boolean;
 }) {
   const { result, facts } = turn;
+  const deep = result.depth === "deep";
   const answerShown = result.answer.some((v) => v.ok);
   const withheld = [...result.answer, ...result.analysis, ...result.caveats].filter((v) => !v.ok);
   const fellBack = result.tried.length > 0;
 
   return (
     <div className="turn">
-      <p className="turn__question">{turn.question}</p>
+      <p className="turn__question">{deep ? `Deeper: ${turn.question}` : turn.question}</p>
       <div className="turn__answer">
         <p className="turn__routed">
           <strong>Gemini</strong>
           <span className="turn__meta">
             {" "}· {result.model} · {result.seconds.toFixed(1)} s
-            {fellBack && ` · ${result.tried.length} busier model${result.tried.length === 1 ? "" : "s"} skipped`}
+            {fellBack && ` · after ${result.tried.length} busy attempt${result.tried.length === 1 ? "" : "s"}`}
           </span>
         </p>
 
@@ -431,11 +443,8 @@ function GeminiTurnView({
           // question can be about something else entirely ("refinery fire in
           // Gujarat" read as "most persistent industrial sources").
           <p className="turn__fallback">
-            Gemini's direct answer was withheld because it went beyond what the data
-            establishes
-            {result.answer[0]?.reason ? `: ${result.answer[0].reason}` : ""}. It names mapped facilities
-            only for the location open in the side panel and has no state or district
-            boundaries; it can show locations by coordinates, class, persistence and heat.
+            The data can't establish that
+            {result.answer[0]?.reason ? ` (answer withheld: ${result.answer[0].reason})` : ""}.
           </p>
         )}
 
@@ -453,10 +462,23 @@ function GeminiTurnView({
           </>
         )}
 
+        {!deep && answerShown && (
+          <p className="turn__offer">
+            Want a deeper analysis?{" "}
+            <button
+              type="button"
+              className="turn__show"
+              disabled={busy}
+              onClick={() => onAsk(turn.question, "deep")}
+            >
+              Yes, go deeper
+            </button>
+          </p>
+        )}
+
         <p className="turn__badge turn__badge--model">
-          Every sentence shown cites the facts it rests on and was checked against them.
-          {withheld.length > 0 &&
-            ` ${withheld.length} sentence${withheld.length === 1 ? " was" : "s were"} withheld.`}
+          ✓ Checked against the data
+          {withheld.length > 0 && ` · ${withheld.length} withheld`}
         </p>
 
         {withheld.length > 0 && (
@@ -481,7 +503,7 @@ function GeminiTurnView({
         )}
 
         <details className="turn__facts">
-          <summary>The briefing Gemini was given ({facts.length} facts)</summary>
+          <summary>Sources ({facts.length} facts)</summary>
           <ul>
             {facts.map((f) => (
               <li key={f.id}>

@@ -1812,3 +1812,9 @@ details.ask__model[open] summary {
     display: none;
   }
 }
+
+.turn__offer {
+  margin: var(--s2) 0 var(--s2);
+  font-size: 12.5px;
+  color: var(--ink-secondary);
+}

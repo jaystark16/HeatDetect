@@ -39,9 +39,8 @@ This is a production system, so that is not acceptable at any stage.
 ## Measured, 2026-10-07
 
 - The full Flash models (3.8, 3.5, flash-latest) returned 503 "high demand" for long
-  stretches; Flash-Lite answered in 1–3 s. Waiting on three busy models cost up to 95 s
-  on a question, so a model that returns 503 or 429 is now tried last for 60 s.
-- With that, a full question (≈4,500-token briefing) answered in 3–4 s.
+  stretches; Flash-Lite answered in 1–3 s. A 60 s cooldown on busy models first cut a
+  95 s question to 3–4 s; it was replaced by retries (below), trading speed for accuracy.
 - An overall-analysis question: every sentence passed and was correct against the data.
   One nuance no rule can catch — "locations in India" for an area that includes
   neighbouring countries — led to stating the area's extent in the first fact.
@@ -50,6 +49,21 @@ This is a production system, so that is not acceptable at any stage.
   substituting an unrelated computed answer. Its cited analysis passed.
 - Withheld correctly in testing: a value Gemini derived by subtraction (3,174 unsurveyed
   cells) that no fact states, and an unranked comparison.
+
+## Revised the same day: short answers, accuracy over speed
+
+The team asked for straight answers and does not mind waiting:
+
+- **Brief by default.** Gemini gives one or two cited sentences ("There are 15 possible
+  industrial fires. [13]") and the page asks "Want a deeper analysis?". Only a yes —
+  the button, or typing "yes", "go deeper", "tell me more" — requests the full answer,
+  analysis, caveats and follow-ups.
+- **Retries replace the cooldown.** A busy model is asked again after 3 s and 8 s before
+  the next, lighter model is tried; the cooldown that pushed questions to Flash-Lite for
+  speed is gone. Measured: a brief answer took 71 s after nine busy attempts (Flash-Lite
+  answered); the deep follow-up got gemini-3.5-flash after three. Every number in that
+  deep answer — 15 fires, 2,389 detections, 6 in 24 h, the strongest at 20.962° N,
+  85.174° E, 30.6 MW, 38 days — matched an independent recount from the snapshot.
 
 ## Consequences
 

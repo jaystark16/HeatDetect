@@ -9,8 +9,8 @@
  *   - one route, POST /generate, from allowed origins only;
  *   - bounded request size and output length;
  *   - JSON output under the caller's schema, never free text;
- *   - tries models best-first and falls back when one is overloaded or
- *     retired, reporting which model answered and which were tried.
+ *   - retries a busy model with backoff, then falls back to the next, and
+ *     reports which model answered and every attempt made.
  *
  * It is not the source of any fact. The dashboard computes every value and
  * checks the model's answer against them (frontend/src/assistant/).
@@ -42,12 +42,13 @@ const MAX_OUTPUT_TOKENS = 4096;
 const MODEL_TIMEOUT_MS = 45_000;
 
 /**
- * Models that just said they were overloaded are skipped for a while instead
- * of being asked again first: three 503s in a row cost ~30 s on one question.
- * Per isolate, so it is a hint, not shared state; a cold isolate simply asks.
+ * Accuracy over speed: a busy model is asked again, with backoff, before the
+ * next (lighter) model is tried. Overload spikes on the full Flash models
+ * usually last seconds to minutes, and the team prefers a slower answer from
+ * the stronger model to a fast one from Flash-Lite.
  */
-const COOLDOWN_MS = 60_000;
-const coolingUntil = new Map();
+export const RETRY_DELAYS_MS = [3_000, 8_000];
+const BUSY = new Set([429, 503]);
 
 /** Statuses that mean "try the next model", not "the request is wrong". */
 const RETRYABLE = new Set([404, 408, 429, 500, 502, 503, 504]);
@@ -114,7 +115,9 @@ async function callModel(model, body, key, fetchImpl) {
   return { ok: true, text, usage: data.usageMetadata ?? null };
 }
 
-export async function handle(request, env, fetchImpl = fetch) {
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export async function handle(request, env, fetchImpl = fetch, sleep = defaultSleep) {
   const origin = request.headers.get("Origin") || "";
   const allowed = allowedOrigins(env).includes(origin) ? origin : null;
   const url = new URL(request.url);
@@ -145,34 +148,31 @@ export async function handle(request, env, fetchImpl = fetch) {
   if (invalid) return json({ error: invalid }, 400, allowed);
 
   const tried = [];
-  const now = Date.now();
-  // Cooling models go last rather than being dropped, so a request can still
-  // succeed when every model has recently been busy.
-  const order = [
-    ...MODELS.filter((m) => !((coolingUntil.get(m) ?? 0) > now)),
-    ...MODELS.filter((m) => (coolingUntil.get(m) ?? 0) > now),
-  ];
-  for (const model of order) {
-    let result;
-    const started = Date.now();
-    try {
-      result = await callModel(model, body, env.GEMINI_API_KEY, fetchImpl);
-    } catch (cause) {
-      // Timeout or network failure: worth trying the next model.
-      tried.push({ model, status: cause?.name === "TimeoutError" ? 408 : 502, ms: Date.now() - started });
-      continue;
+  models: for (const model of MODELS) {
+    for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+      if (attempt > 0) await sleep(RETRY_DELAYS_MS[attempt - 1]);
+      let result;
+      const started = Date.now();
+      try {
+        result = await callModel(model, body, env.GEMINI_API_KEY, fetchImpl);
+      } catch (cause) {
+        // Timeout or network failure: worth trying the next model.
+        tried.push({ model, status: cause?.name === "TimeoutError" ? 408 : 502, ms: Date.now() - started });
+        continue models;
+      }
+      if (result.ok) {
+        return json(
+          { model, text: result.text, usage: result.usage, ms: Date.now() - started, tried },
+          200,
+          allowed,
+        );
+      }
+      tried.push({ model, status: result.status, reason: result.reason, ms: Date.now() - started });
+      // A request Google rejects as malformed will be rejected by every model.
+      if (!RETRYABLE.has(result.status)) break models;
+      // Busy: wait and ask the same model again. Gone or erroring: move on.
+      if (!BUSY.has(result.status)) continue models;
     }
-    if (result.ok) {
-      return json(
-        { model, text: result.text, usage: result.usage, ms: Date.now() - started, tried },
-        200,
-        allowed,
-      );
-    }
-    tried.push({ model, status: result.status, reason: result.reason, ms: Date.now() - started });
-    if (result.status === 503 || result.status === 429) coolingUntil.set(model, Date.now() + COOLDOWN_MS);
-    // A request Google rejects as malformed will be rejected by every model.
-    if (!RETRYABLE.has(result.status)) break;
   }
   return json({ error: "no model could answer", tried }, 503, allowed);
 }
