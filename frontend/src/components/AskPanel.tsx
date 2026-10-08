@@ -211,7 +211,7 @@ export default function AskPanel({ context, onShow }: Props) {
         {GEMINI_CONFIGURED ? (
           <p>
             Short, cited answers by <strong>Google Gemini</strong>, checked against the
-            data. Questions are sent to Gemini through HeatDetect's server.
+            data. Questions are sent to Google’s Gemini service.
           </p>
         ) : (
           <p>

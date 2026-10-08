@@ -1,5 +1,7 @@
 /**
- * Gemini, through HeatDetect's proxy (proxy/worker.mjs), which holds the key.
+ * Gemini, through HeatDetect's proxy (proxy/worker.mjs), which holds the key,
+ * or, on builds with no proxy URL, directly from the browser with a key
+ * injected at build time (direct.ts explains that trade-off).
  *
  * Gemini sees the briefing — every fact numbered — and must answer in
  * sentences that cite those numbers. It is asked for an answer, an analysis
@@ -9,6 +11,7 @@
  */
 
 import { renderFacts, type Briefing } from "./briefing";
+import { generateDirect } from "./direct";
 import {
   verifyCited,
   verifyFollowUp,
@@ -18,8 +21,14 @@ import {
 
 const BASE = (import.meta.env.VITE_ASSISTANT_URL ?? "").replace(/\/$/, "");
 
-/** False when no proxy URL was configured at build time. */
-export const GEMINI_CONFIGURED = BASE !== "";
+/** Used only when no proxy URL is set. Public once built: see direct.ts. */
+const DIRECT_KEY = (import.meta.env.VITE_GEMINI_API_KEY ?? "").trim();
+
+/** True when the build can reach Gemini through the proxy. */
+export const GEMINI_VIA_PROXY = BASE !== "";
+
+/** False when the build has neither a proxy URL nor a key. */
+export const GEMINI_CONFIGURED = GEMINI_VIA_PROXY || DIRECT_KEY !== "";
 
 /** Accuracy over speed: the proxy retries busy models before lighter ones. */
 const TIMEOUT_MS = 240_000;
@@ -136,33 +145,46 @@ export async function askGemini(
   if (!GEMINI_CONFIGURED) throw new GeminiError("No assistant service is configured.");
   const started = performance.now();
 
-  let response: Response;
-  try {
-    response = await fetch(`${BASE}/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-      body: JSON.stringify({
-        system: SYSTEMS[depth],
-        prompt: `Briefing:\n${renderFacts(briefing.facts)}\n\nQuestion: ${question}`,
-        schema: SCHEMAS[depth],
-      }),
-    });
-  } catch (cause) {
-    throw new GeminiError(
-      cause instanceof DOMException && cause.name === "TimeoutError"
-        ? "Gemini did not answer in time."
-        : "The assistant service could not be reached.",
-    );
+  const request = {
+    system: SYSTEMS[depth],
+    prompt: `Briefing:\n${renderFacts(briefing.facts)}\n\nQuestion: ${question}`,
+    schema: SCHEMAS[depth],
+  };
+
+  let body: { model?: string; text?: string; tried?: { model: string; status: number }[]; error?: string } | null;
+
+  if (GEMINI_VIA_PROXY) {
+    let response: Response;
+    try {
+      response = await fetch(`${BASE}/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(TIMEOUT_MS),
+        body: JSON.stringify(request),
+      });
+    } catch (cause) {
+      throw new GeminiError(
+        cause instanceof DOMException && cause.name === "TimeoutError"
+          ? "Gemini did not answer in time."
+          : "The assistant service could not be reached.",
+      );
+    }
+    body = await response.json().catch(() => null);
+    if (!response.ok && body && !body.error) body.error = `The assistant service returned ${response.status}`;
+  } else {
+    let result;
+    try {
+      result = await generateDirect(request, DIRECT_KEY);
+    } catch {
+      throw new GeminiError("Gemini could not be reached.");
+    }
+    body = result;
   }
 
-  const body = (await response.json().catch(() => null)) as
-    | { model?: string; text?: string; tried?: { model: string; status: number }[]; error?: string }
-    | null;
-  if (!response.ok || !body?.text || !body.model) {
+  if (!body?.text || !body.model) {
     const tried = body?.tried?.map((t) => `${t.model} ${t.status}`).join(", ");
     throw new GeminiError(
-      `${body?.error ?? `The assistant service returned ${response.status}`}${tried ? ` (tried: ${tried})` : ""}.`,
+      `${body?.error ?? "The assistant service did not answer"}${tried ? ` (tried: ${tried})` : ""}.`,
     );
   }
 

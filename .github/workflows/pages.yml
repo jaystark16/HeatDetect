@@ -135,6 +135,11 @@ jobs:
           # the Gemini key stays in the Worker. Unset, the Ask tab answers from
           # the data without Gemini.
           VITE_ASSISTANT_URL: ${{ vars.ASSISTANT_URL }}
+          # Used only while ASSISTANT_URL is unset: the Ask tab then calls Gemini
+          # straight from the browser. This puts the key in the public
+          # JavaScript, where anyone can copy it. Owner's decision, 2026-10-08,
+          # to run without the proxy; see frontend/src/assistant/direct.ts.
+          VITE_GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: npm run build
 
       - uses: actions/configure-pages@v5
