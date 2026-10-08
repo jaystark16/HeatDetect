@@ -41,9 +41,11 @@ from .model import (
     CLASSES,
     DEFAULT_FEATURE_SET,
     FEATURE_SETS,
+    PASS_WINDOW_S,
     ObservationFeatures,
     TrainedModel,
     feature_mask,
+    same_pass_neighbours,
     save,
     spatial_block,
     split_by_block,
@@ -59,6 +61,9 @@ def load_training_rows() -> tuple[np.ndarray, np.ndarray, list[str], int]:
 
     query = (
         select(
+            detections.c.detection_id,
+            detections.c.satellite_code,
+            detections.c.acquired_at,
             detections.c.frp_mw,
             detections.c.brightness_k,
             detections.c.brightness_long_k,
@@ -72,6 +77,7 @@ def load_training_rows() -> tuple[np.ndarray, np.ndarray, list[str], int]:
             cell_context.c.distance_to_facility_m,
             cell_context.c.facilities_within_5km,
             cell_context.c.land_cover,
+            cell_context.c.nearest_facility_category,
             cell_labels.c.label,
         )
         .select_from(
@@ -89,12 +95,45 @@ def load_training_rows() -> tuple[np.ndarray, np.ndarray, list[str], int]:
                 cell_context.c.context_coverage != "surveyed"
             )
         ).all()
+        # Every detection can be a same-pass neighbour, surveyed or not: at
+        # serve time the whole pass is visible.
+        everyone = conn.execute(
+            select(
+                detections.c.detection_id,
+                detections.c.satellite_code,
+                detections.c.acquired_at,
+                detections.c.latitude,
+                detections.c.longitude,
+                detections.c.frp_mw,
+            )
+        ).all()
+
+    # Per satellite, detections sorted by time, so each pass window is a slice.
+    by_satellite: dict[str, list[tuple[float, str, float, float, float]]] = {}
+    for d in everyone:
+        by_satellite.setdefault(d.satellite_code, []).append(
+            (d.acquired_at.timestamp(), d.detection_id, d.latitude, d.longitude, d.frp_mw)
+        )
+    pass_index = {}
+    for satellite, items in by_satellite.items():
+        items.sort()
+        pass_index[satellite] = (np.asarray([i[0] for i in items]), items)
 
     vectors: list[list[float]] = []
     targets: list[str] = []
     blocks: list[str] = []
 
     for r in rows:
+        times, items = pass_index[r.satellite_code]
+        t = r.acquired_at.timestamp()
+        lo = int(np.searchsorted(times, t - PASS_WINDOW_S))
+        hi = int(np.searchsorted(times, t + PASS_WINDOW_S, side="right"))
+        count, frp_sum, frp_max = same_pass_neighbours(
+            r.latitude,
+            r.longitude,
+            r.detection_id,
+            [(i[1], i[2], i[3], i[4]) for i in items[lo:hi]],
+        )
         features = ObservationFeatures(
             frp_mw=r.frp_mw,
             brightness_k=r.brightness_k,
@@ -109,6 +148,11 @@ def load_training_rows() -> tuple[np.ndarray, np.ndarray, list[str], int]:
             distance_to_facility_m=r.distance_to_facility_m,
             facilities_within_5km=r.facilities_within_5km,
             land_cover=r.land_cover,
+            acquired_at=r.acquired_at,
+            nearest_facility_category=r.nearest_facility_category,
+            same_pass_neighbours=count,
+            same_pass_frp_sum=frp_sum,
+            same_pass_frp_max=frp_max,
         )
         vectors.append(features.to_vector())
         targets.append(r.label)
@@ -265,7 +309,7 @@ def main(argv: list[str] | None = None) -> int:
             "the feature set differs."
         )
         summary: dict[str, dict] = {}
-        for name in ("full", "no_coords", "thermal_only"):
+        for name in ("full", "no_coords", "thermal_only", "pass_context"):
             _, metrics = fit_and_evaluate(X, y, blocks, name, args.test_fraction)
             print_report(metrics)
             summary[name] = metrics

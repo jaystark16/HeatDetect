@@ -92,20 +92,20 @@ contributes dozens of rows.
 
 <!-- METRICS:START -->
 
-Model `rf-20260923-no_coords-rule-v1-b9e6ab4c` · feature set `no_coords` · 22360 train / 13572 test rows across 139/60 geographic blocks.
+Model `rf-20261008-pass_context-rule-v1-0a2fe936` · feature set `pass_context` · 40948 train / 13163 test rows across 145/62 geographic blocks.
 
 | class | precision | recall | F1 | support |
 |---|---|---|---|---|
-| `industrial_fire` ⚠ | 0.000 | 0.000 | 0.000 | 214 |
-| `persistent_industrial` | 0.744 | 0.747 | 0.745 | 3760 |
-| `natural_fire` | 0.813 | 0.999 | 0.897 | 4977 |
-| `unknown` | 0.730 | 0.578 | 0.645 | 4621 |
+| `industrial_fire` ⚠ | 0.000 | 0.000 | 0.000 | 300 |
+| `persistent_industrial` | 0.753 | 0.801 | 0.776 | 4886 |
+| `natural_fire` | 0.926 | 0.971 | 0.948 | 3840 |
+| `unknown` | 0.730 | 0.672 | 0.700 | 4137 |
 
-macro F1 **0.572**. Overall accuracy is deliberately not reported: the classes are heavily imbalanced, so a single figure would flatter the model while hiding that the rarest class performs worst.
+macro F1 **0.606**. Overall accuracy is deliberately not reported: the classes are heavily imbalanced, so a single figure would flatter the model while hiding that the rarest class performs worst.
 
 ⚠ marks classes below the 0.5 precision floor, which the API **suppresses** rather than reports: `industrial_fire` (precision 0.000). Most such predictions would be wrong, so they are returned as *not classified* and findings for those classes come only from the deterministic rules.
 
-Most influential features: `distance_to_facility_m` 0.371, `facilities_within_5km` 0.245, `land_cover_unknown` 0.067, `brightness_k` 0.043, `brightness_long_k` 0.041.
+Most influential features: `distance_to_facility_m` 0.262, `facilities_within_5km` 0.208, `land_cover_barren` 0.070, `land_cover_unknown` 0.044, `solar_hour_cos` 0.040.
 
 *Labels are programmatic heuristics derived from multi-day persistence, not verified ground truth. These figures measure agreement with a documented rule set under a spatial hold-out — a consistency check, not validation against reality.*
 

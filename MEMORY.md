@@ -5,6 +5,13 @@ and debugging discoveries. Don't repeat what git history or the code already say
 
 ## 2026-10-08
 
+- **Same-pass context made the model better; gradient boosting made it worse.** Adding
+  pass-context features (`pass_context`) lifted 5-fold spatial CV macro F1 from 0.570 to
+  0.606, winning in all five folds. Nearly all of the gain is the same-pass neighbourhood;
+  physics, solar time and facility category alone added ~0.005. Balanced
+  HistGradientBoosting on the same features scored 0.482. `industrial_fire` is still
+  unreportable (precision ~0.09). A single 70/30 block split moves macro F1 by ±0.01–0.05
+  depending on the blocks, so compare models with cross-validation, not one split.
 - **Cloudflare proxy dropped; the public site calls Gemini directly.** The owner didn't
   want to set up Cloudflare and accepted that the key becomes readable in the site's
   JavaScript. The key comes from the `GEMINI_API_KEY` secret at build time and is never

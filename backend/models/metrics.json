@@ -1,35 +1,35 @@
 {
-  "model_version": "rf-20260923-no_coords-rule-v1-b9e6ab4c",
-  "trained_at": "2026-09-23T08:08:06.811684+00:00",
-  "feature_set": "no_coords",
-  "feature_count": 21,
+  "model_version": "rf-20261008-pass_context-rule-v1-0a2fe936",
+  "trained_at": "2026-10-08T07:06:11.548718+00:00",
+  "feature_set": "pass_context",
+  "feature_count": 37,
   "per_class": {
     "industrial_fire": {
       "precision": 0.0,
       "recall": 0.0,
       "f1": 0.0,
-      "support": 214
+      "support": 300
     },
     "persistent_industrial": {
-      "precision": 0.743841059602649,
-      "recall": 0.7468085106382979,
-      "f1": 0.7453218314532183,
-      "support": 3760
+      "precision": 0.7529321284368391,
+      "recall": 0.8014735980352026,
+      "f1": 0.7764449291166848,
+      "support": 4886
     },
     "natural_fire": {
-      "precision": 0.8133791298658816,
-      "recall": 0.9991963029937714,
-      "f1": 0.8967631412857272,
-      "support": 4977
+      "precision": 0.9257511795381177,
+      "recall": 0.9708333333333333,
+      "f1": 0.9477564509978391,
+      "support": 3840
     },
     "unknown": {
-      "precision": 0.7296336796063423,
-      "recall": 0.57758061025752,
-      "f1": 0.6447638603696099,
-      "support": 4621
+      "precision": 0.7298503544237332,
+      "recall": 0.6719845298525502,
+      "f1": 0.6997231311351624,
+      "support": 4137
     }
   },
-  "macro_f1": 0.5717122082771389,
+  "macro_f1": 0.6059811278124216,
   "confusion_matrix": {
     "labels": [
       "industrial_fire",
@@ -40,64 +40,80 @@
     "matrix": [
       [
         0,
-        180,
+        257,
         0,
-        34
+        43
       ],
       [
-        1,
-        2808,
+        96,
+        3916,
         0,
-        951
+        874
       ],
       [
         0,
         0,
-        4973,
-        4
+        3728,
+        112
       ],
       [
-        24,
-        787,
-        1141,
-        2669
+        30,
+        1028,
+        299,
+        2780
       ]
     ]
   },
   "feature_importance": {
-    "distance_to_facility_m": 0.370574014907157,
-    "facilities_within_5km": 0.24522886420996584,
-    "land_cover_unknown": 0.06731918605985492,
-    "brightness_k": 0.04300528550201207,
-    "brightness_long_k": 0.04094572185240808,
-    "facility_distance_missing": 0.035836524143032594,
-    "dual_band_delta_k": 0.03288441116805572,
-    "land_cover_industrial": 0.02835828562628224,
-    "frp_mw": 0.025174073316322886,
-    "is_night": 0.023458231604884184,
-    "log_frp": 0.022359240963481363,
-    "land_cover_barren": 0.02152110026236791,
-    "scan": 0.014694498041537947,
-    "land_cover_forest": 0.013652535258254155,
-    "track": 0.013205211858393812,
-    "is_viirs": 0.0009493494724084102,
-    "confidence_ordinal": 0.0008334657535809725,
+    "distance_to_facility_m": 0.2617506895255979,
+    "facilities_within_5km": 0.2084688167024279,
+    "land_cover_barren": 0.07044069478779937,
+    "land_cover_unknown": 0.043954200417106126,
+    "solar_hour_cos": 0.03958153281217071,
+    "land_cover_industrial": 0.031502408075308394,
+    "facility_category_mining": 0.028247618177514013,
+    "is_night": 0.025137140789436355,
+    "solar_hour_sin": 0.023780456532454582,
+    "facility_category_none": 0.023087277333310362,
+    "log_same_pass_frp_sum": 0.021802338033277736,
+    "brightness_k": 0.02085550039648733,
+    "facility_distance_missing": 0.020673709607801984,
+    "log_same_pass_neighbours": 0.02010576459990395,
+    "same_pass_neighbours": 0.018278562411581982,
+    "same_pass_frp_max": 0.015329100279283692,
+    "dual_band_delta_k": 0.014226509940234196,
+    "log_frp": 0.012876658241989086,
+    "brightness_long_k": 0.012493048230340443,
+    "frp_mw": 0.012280777636953722,
+    "brightness_ratio": 0.0112860277917325,
+    "frp_density": 0.009146816706971813,
+    "log_frp_density": 0.008577016331737653,
+    "pixel_area_km2": 0.007853992798619158,
+    "facility_category_industrial": 0.007358908990464699,
+    "scan": 0.006968313288646872,
+    "land_cover_forest": 0.006369541897811006,
+    "track": 0.006216844888578901,
+    "facility_category_power": 0.004749239869436112,
+    "facility_category_works": 0.004240655742695958,
+    "is_viirs": 0.001222284897226826,
+    "facility_category_other": 0.0007930555552130574,
+    "confidence_ordinal": 0.0003444967098858113,
     "land_cover_urban": 0.0,
     "land_cover_cropland": 0.0,
     "land_cover_shrubland": 0.0,
     "land_cover_water": 0.0
   },
-  "training_rows": 22360,
-  "test_rows": 13572,
-  "train_blocks": 139,
-  "test_blocks": 60,
+  "training_rows": 40948,
+  "test_rows": 13163,
+  "train_blocks": 145,
+  "test_blocks": 62,
   "label_rule_version": "rule-v1",
   "split": "spatial block hold-out, 1 degree blocks",
   "label_distribution": {
-    "natural_fire": 11656,
-    "unknown": 13507,
-    "persistent_industrial": 10089,
-    "industrial_fire": 680
+    "natural_fire": 15490,
+    "unknown": 18259,
+    "persistent_industrial": 17973,
+    "industrial_fire": 2389
   },
-  "unsurveyed_cells_excluded": 1787
+  "unsurveyed_cells_excluded": 3174
 }

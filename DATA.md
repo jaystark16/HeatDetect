@@ -65,10 +65,13 @@ intuition.
 - scikit-learn RandomForest (ADR 0003), file `backend/models/single_observation_rf.joblib`
   (7.45 MiB), metrics in `backend/models/metrics.json`.
 - **Feature sets** are in `app/model.py` `FEATURE_SETS`. `full` (adds coordinates) is kept
-  for comparison only. **`no_coords`** (thermal + proximity) ships, because it can't
-  memorise places and, unlike `full`, it had non-zero `industrial_fire` recall in the
-  7-day runs. (In the current ablation table, `no_coords` is at 0.000 and `thermal_only`
-  at 0.091.)
+  for comparison only. **`pass_context`** ships (since 2026-10-08): `no_coords` (thermal +
+  proximity) plus what one overpass shows beyond the pixel: FRP per km², local solar
+  hour, nearest-facility category, and other detections in the same pass within 5 km.
+  Still no coordinates and no history. Under 5-fold spatial cross-validation it raised
+  macro F1 from 0.570 to 0.606 and won in every fold; see
+  `docs/findings/2026-10-08-pass-context-features.md`. The same-pass neighbour count is
+  computed by `model.same_pass_neighbours`, shared by training and `service.py`.
 - **Split:** spatial hold-out by 1° block, so one facility never lands in both train
   and test.
 - **Metrics:** precision, recall and F1 per class plus macro F1. Accuracy is never

@@ -21,6 +21,7 @@ wrong, which is not a finding worth showing an operator.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -517,6 +518,35 @@ def get_hotspot_detail(
             select(cell_labels).where(cell_labels.c.cell_id == row.cell_id)
         ).one_or_none()
 
+        # Same-pass neighbours for the model (feature set `pass_context`):
+        # same satellite, within the pass window, inside a box a little wider
+        # than the radius; `same_pass_neighbours` applies the exact distance.
+        window = timedelta(seconds=ml.PASS_WINDOW_S)
+        dlat = ml.NEIGHBOUR_RADIUS_KM / 111.0 * 1.2
+        dlon = dlat / max(0.2, math.cos(math.radians(row.latitude)))
+        pass_rows = conn.execute(
+            select(
+                detections.c.detection_id,
+                detections.c.latitude,
+                detections.c.longitude,
+                detections.c.frp_mw,
+            ).where(
+                detections.c.satellite_code == row.satellite_code,
+                detections.c.acquired_at.between(
+                    row.acquired_at - window, row.acquired_at + window
+                ),
+                detections.c.latitude.between(row.latitude - dlat, row.latitude + dlat),
+                detections.c.longitude.between(row.longitude - dlon, row.longitude + dlon),
+            )
+        ).all()
+
+    neighbours, neighbour_frp_sum, neighbour_frp_max = ml.same_pass_neighbours(
+        row.latitude,
+        row.longitude,
+        row.detection_id,
+        [(p.detection_id, p.latitude, p.longitude, p.frp_mw) for p in pass_rows],
+    )
+
     stats = _stats_from_row(stats_row) if stats_row else None
     context = _context_from_row(context_row) if context_row else None
 
@@ -550,6 +580,11 @@ def get_hotspot_detail(
             distance_to_facility_m=context.distance_to_facility_m if context else None,
             facilities_within_5km=context.facilities_within_5km if context else 0,
             land_cover=context.land_cover if context else "unknown",
+            acquired_at=row.acquired_at,
+            nearest_facility_category=context.nearest_facility_category if context else None,
+            same_pass_neighbours=neighbours,
+            same_pass_frp_sum=neighbour_frp_sum,
+            same_pass_frp_max=neighbour_frp_max,
         )
         if context
         else None

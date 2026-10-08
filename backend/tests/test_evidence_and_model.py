@@ -286,6 +286,82 @@ def test_thermal_only_excludes_all_context():
     assert "facilities_within_5km" not in names
 
 
+def test_pass_context_adds_no_coordinates_or_history():
+    """The shipped set may see the overpass, never the place or the past."""
+    names = ml.FEATURE_SETS["pass_context"]
+    assert "latitude" not in names and "longitude" not in names
+    assert set(ml.FEATURE_SETS["no_coords"]) <= set(names)
+    assert not any("distinct_days" in n or "baseline" in n for n in names)
+    assert ml.DEFAULT_FEATURE_SET == "pass_context"
+
+
+def test_same_pass_neighbours_counts_only_others_inside_the_radius():
+    lat, lon = 23.75, 86.40
+    candidates = [
+        ("self", lat, lon, 9.0),  # the detection itself is never its own neighbour
+        ("near", lat + 0.02, lon, 2.0),  # ~2.2 km
+        ("edge", lat, lon + 0.045, 3.0),  # ~4.6 km at this latitude
+        ("far", lat + 0.10, lon, 50.0),  # ~11 km
+    ]
+    count, frp_sum, frp_max = ml.same_pass_neighbours(lat, lon, "self", candidates)
+    assert count == 2
+    assert frp_sum == pytest.approx(5.0)
+    assert frp_max == 3.0
+
+
+def test_pass_context_features_encode_density_time_and_category():
+    from datetime import datetime
+
+    features = ml.ObservationFeatures(
+        frp_mw=4.0,
+        brightness_k=340.0,
+        brightness_long_k=300.0,
+        scan=0.4,
+        track=0.5,
+        day_night="N",
+        confidence_tier="nominal",
+        instrument="VIIRS",
+        latitude=23.75,
+        longitude=90.0,  # +6 h solar offset
+        distance_to_facility_m=300.0,
+        facilities_within_5km=6,
+        land_cover="barren",
+        acquired_at=datetime(2026, 10, 1, 18, 0),  # 18:00 UTC -> local solar midnight
+        nearest_facility_category="mining",
+        same_pass_neighbours=3,
+        same_pass_frp_sum=6.0,
+        same_pass_frp_max=2.5,
+    )
+    v = features.to_vector()
+    at = ml.FEATURE_NAMES.index
+    assert v[at("frp_density")] == pytest.approx(4.0 / 0.2)
+    assert v[at("solar_hour_cos")] == pytest.approx(1.0)
+    assert v[at("facility_category_mining")] == 1.0
+    assert sum(v[at(f"facility_category_{c}")] for c in ml.FACILITY_CATEGORIES) == 1.0
+    assert v[at("same_pass_neighbours")] == 3.0
+
+
+def test_unknown_facility_category_folds_into_other():
+    features = ml.ObservationFeatures(
+        frp_mw=1.0,
+        brightness_k=310.0,
+        brightness_long_k=300.0,
+        scan=0.3,
+        track=0.3,
+        day_night="D",
+        confidence_tier="nominal",
+        instrument="VIIRS",
+        latitude=20.0,
+        longitude=85.0,
+        distance_to_facility_m=100.0,
+        facilities_within_5km=1,
+        land_cover="industrial",
+        nearest_facility_category="chemical",
+    )
+    v = features.to_vector()
+    assert v[ml.FEATURE_NAMES.index("facility_category_other")] == 1.0
+
+
 def test_unknown_feature_set_raises():
     with pytest.raises(KeyError, match="Unknown feature set"):
         ml.feature_mask("not-a-set")

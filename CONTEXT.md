@@ -48,7 +48,8 @@ from memory. The pipeline appends continuously, so counts grow. Permanent rules 
 **Label distribution (locations):** `natural_fire` 10,140 · `unknown` 9,528 ·
 `persistent_industrial` 206 · `industrial_fire` 15.
 
-**Shipped model:** `rf-20260923-no_coords-rule-v1-b9e6ab4c`. Its per-class metrics
+**Shipped model:** `rf-20261008-pass_context-rule-v1-0a2fe936` (feature set
+`pass_context`, retrained 2026-10-08). Its per-class metrics
 are in the README's generated block; don't copy them here. Current headline:
 `industrial_fire` has zero precision from the model, so it is suppressed and findings for
 that class come only from the rules.

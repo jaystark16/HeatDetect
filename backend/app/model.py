@@ -74,6 +74,17 @@ LAND_COVERS = (
     "unknown",
 )
 
+# Nearest-facility categories as stored in cell_context. Rare ones fold into
+# "other"; "none" means no mapped facility within the search radius.
+FACILITY_CATEGORIES = ("industrial", "power", "mining", "works", "other", "none")
+
+# Same-pass neighbourhood: other detections from the same satellite, within
+# this window and radius, in the same overpass. Available the moment a
+# detection arrives, so it is not history. Vegetation fires tend to burn as
+# clusters of pixels; an isolated hot pixel near a mine is a different pattern.
+PASS_WINDOW_S = 15 * 60
+NEIGHBOUR_RADIUS_KM = 5.0
+
 FEATURE_NAMES: tuple[str, ...] = (
     "frp_mw",
     "log_frp",
@@ -91,6 +102,18 @@ FEATURE_NAMES: tuple[str, ...] = (
     "facility_distance_missing",
     "facilities_within_5km",
     *(f"land_cover_{c}" for c in LAND_COVERS),
+    # Added 2026-10-08 (feature set `pass_context`).
+    "pixel_area_km2",
+    "frp_density",
+    "log_frp_density",
+    "brightness_ratio",
+    "solar_hour_sin",
+    "solar_hour_cos",
+    *(f"facility_category_{c}" for c in FACILITY_CATEGORIES),
+    "same_pass_neighbours",
+    "log_same_pass_neighbours",
+    "log_same_pass_frp_sum",
+    "same_pass_frp_max",
 )
 
 CLASSES: tuple[str, ...] = (
@@ -131,16 +154,37 @@ _PROXIMITY = (
     *(f"land_cover_{c}" for c in LAND_COVERS),
 )
 
+_PASS_CONTEXT = (
+    "pixel_area_km2",
+    "frp_density",
+    "log_frp_density",
+    "brightness_ratio",
+    "solar_hour_sin",
+    "solar_hour_cos",
+    *(f"facility_category_{c}" for c in FACILITY_CATEGORIES),
+    "same_pass_neighbours",
+    "log_same_pass_neighbours",
+    "log_same_pass_frp_sum",
+    "same_pass_frp_max",
+)
+
 FEATURE_SETS: dict[str, tuple[str, ...]] = {
-    "full": FEATURE_NAMES,
+    "full": FEATURE_NAMES[:15 + len(LAND_COVERS)],
     "no_coords": _THERMAL + _PROXIMITY,
     # Measures the thermal signal in isolation. If this performs near chance,
     # the honest conclusion is that a single thermal observation does not
     # discriminate these classes and the system must rely on persistence.
     "thermal_only": _THERMAL,
+    # `no_coords` plus what a single overpass shows beyond the pixel itself:
+    # fire intensity per unit area, local solar time, the kind of nearby
+    # facility, and the other detections in the same pass. Still no
+    # coordinates and no history. Under 5-fold spatial cross-validation it
+    # raised macro F1 from 0.570 to 0.606; see
+    # docs/findings/2026-10-08-pass-context-features.md.
+    "pass_context": _THERMAL + _PROXIMITY + _PASS_CONTEXT,
 }
 
-DEFAULT_FEATURE_SET = "no_coords"
+DEFAULT_FEATURE_SET = "pass_context"
 
 
 def feature_mask(feature_set: str) -> list[int]:
@@ -172,6 +216,14 @@ class ObservationFeatures:
     distance_to_facility_m: float | None
     facilities_within_5km: int
     land_cover: str
+    # Pass context (feature set `pass_context`). Defaults exist only so older
+    # callers and tests still construct; the serving path and training both
+    # fill them from real data.
+    acquired_at: datetime | None = None
+    nearest_facility_category: str | None = None
+    same_pass_neighbours: int = 0
+    same_pass_frp_sum: float = 0.0
+    same_pass_frp_max: float = 0.0
 
     def to_vector(self) -> list[float]:
         distance_missing = self.distance_to_facility_m is None
@@ -201,7 +253,67 @@ class ObservationFeatures:
             float(self.facilities_within_5km),
         ]
         row.extend(1.0 if self.land_cover == c else 0.0 for c in LAND_COVERS)
+
+        # Fire radiative power per km² of pixel footprint: a small, very hot
+        # industrial source and a large, cooler vegetation front can share an
+        # FRP value but not a density. scan × track is the footprint in km.
+        area = max(self.scan * self.track, 1e-6)
+        density = self.frp_mw / area
+        if self.acquired_at is not None:
+            when = self.acquired_at
+            hour = (when.hour + when.minute / 60 + self.longitude / 15) % 24
+        else:
+            hour = 0.0
+        category = self.nearest_facility_category or "none"
+        if category not in FACILITY_CATEGORIES:
+            category = "other"
+        row.extend(
+            [
+                area,
+                density,
+                math.log1p(max(density, 0.0)),
+                self.brightness_k / max(self.brightness_long_k, 1.0),
+                math.sin(2 * math.pi * hour / 24),
+                math.cos(2 * math.pi * hour / 24),
+            ]
+        )
+        row.extend(1.0 if category == c else 0.0 for c in FACILITY_CATEGORIES)
+        row.extend(
+            [
+                float(self.same_pass_neighbours),
+                math.log1p(self.same_pass_neighbours),
+                math.log1p(max(self.same_pass_frp_sum, 0.0)),
+                self.same_pass_frp_max,
+            ]
+        )
         return row
+
+
+def same_pass_neighbours(
+    latitude: float,
+    longitude: float,
+    detection_id: str,
+    candidates: Sequence[tuple[str, float, float, float]],
+) -> tuple[int, float, float]:
+    """Count, FRP sum and FRP max of other detections within the radius.
+
+    `candidates` are (detection_id, latitude, longitude, frp_mw) already
+    restricted to the same satellite and pass window. Shared by training and
+    serving so both compute the feature identically.
+    """
+    count, frp_sum, frp_max = 0, 0.0, 0.0
+    coslat = math.cos(math.radians(latitude))
+    radius_sq = NEIGHBOUR_RADIUS_KM**2
+    for other_id, lat, lon, frp in candidates:
+        if other_id == detection_id:
+            continue
+        dy = (lat - latitude) * 111.2
+        dx = (lon - longitude) * 111.2 * coslat
+        if dx * dx + dy * dy <= radius_sq:
+            count += 1
+            frp_sum += frp
+            frp_max = max(frp_max, frp)
+    return count, frp_sum, frp_max
 
 
 @dataclass
