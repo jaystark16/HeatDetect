@@ -49,7 +49,7 @@ export default function FilterPanel({ filters, analytics, onChange }: Props) {
     { value: 168, label: "7d", title: "Detected in the last 7 days" },
     {
       value: "all",
-      label: days ? `All · ${days}d` : "All",
+      label: days ? `All ${days}d` : "All",
       title: days ? `Everything ingested: ${days} days of data` : "Everything ingested",
     },
   ];

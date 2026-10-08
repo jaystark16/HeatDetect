@@ -23,8 +23,26 @@ const MODE_COPY: Record<DataMode, { chip: string; pulse: boolean }> = {
   cached_snapshot: { chip: "Cached snapshot", pulse: false },
 };
 
-function formatDate(value: string | null): string {
-  return value ? new Date(value).toLocaleString() : "—";
+/** "7 Oct 2026, 00:45" — readable, and unambiguous between day and month. */
+export function formatDate(value: string | null): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** "25 Jul 2026": for spans, where the time of day is noise. */
+function formatDay(value: string | null): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleDateString("en-GB", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
 }
 
 /** "40 min", "5 h", "13 days" — whichever unit a person reads at a glance. */
@@ -83,17 +101,17 @@ export default function ProvenanceBar({
     // Both ages, because they answer different questions: is the pipeline
     // keeping up, and when did a satellite last see something.
     detailLine =
-      `Rebuilt from NASA FIRMS ${formatAge(snapshot.buildAgeHours)} ago · ` +
-      `newest detection ${formatAge(snapshot.newestAgeHours)} ago · ` +
+      `Rebuilt from NASA FIRMS ${formatAge(snapshot.buildAgeHours)} ago, ` +
+      `newest detection ${formatAge(snapshot.newestAgeHours)} ago, ` +
       `refreshes every ${snapshot.cadenceHours} h`;
   } else if (mode === "cached_snapshot" && snapshot) {
     detailLine =
-      `Data ${formatDate(oldest)} → ${formatDate(newest)} · ` +
+      `Data from ${formatDay(oldest)} to ${formatDay(newest)}, ` +
       (snapshot.scheduled
-        ? `last rebuilt ${formatAge(snapshot.buildAgeHours)} ago — scheduled refresh has fallen behind`
+        ? `last rebuilt ${formatAge(snapshot.buildAgeHours)} ago. The scheduled refresh has fallen behind.`
         : `one-off build from ${formatAge(snapshot.buildAgeHours)} ago`);
   } else {
-    detailLine = `Data window ${formatDate(oldest)} → ${formatDate(newest)}`;
+    detailLine = `Data from ${formatDay(oldest)} to ${formatDay(newest)}`;
   }
 
   return (

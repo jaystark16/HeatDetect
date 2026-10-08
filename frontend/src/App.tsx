@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { API_CONFIGURED, api } from "./api";
 import type { AskContext } from "./assistant/intents";
 import AskPanel from "./components/AskPanel";
-import { formatAge } from "./components/ProvenanceBar";
+import { formatAge, formatDate } from "./components/ProvenanceBar";
 import type { FallbackMeta } from "./fallback";
 import DetailPanel from "./components/DetailPanel";
 import FilterPanel, { windowDays } from "./components/FilterPanel";
@@ -202,10 +202,8 @@ export default function App() {
     [allMarks, analytics, model, provenance, fromSnapshot, snapshot, mode, detail],
   );
 
-  const builtOn = snapshot ? new Date(snapshot.builtAt).toLocaleString() : null;
-  const newestOn = snapshot?.newestDetectionAt
-    ? new Date(snapshot.newestDetectionAt).toLocaleString()
-    : null;
+  const builtOn = snapshot ? formatDate(snapshot.builtAt) : null;
+  const newestOn = snapshot?.newestDetectionAt ? formatDate(snapshot.newestDetectionAt) : null;
 
   const hotspots = marks ?? [];
   // Both sources return every matching location, up to the API's response
@@ -220,18 +218,14 @@ export default function App() {
     <div className="app">
       <header className="topbar">
         <div className="brand">
-          <div className="brand__tile" aria-hidden="true">
-            <FlameIcon />
-          </div>
-          <div className="brand__text">
-            <h1 className="brand__name">HeatDetect</h1>
-            <p className="brand__sub">India thermal source monitor</p>
-          </div>
+          <h1 className="brand__name">HeatDetect</h1>
+          <p className="brand__sub">Thermal source monitor</p>
         </div>
         <span className="topbar__spacer" />
         {/* Search needs the facilities table, which the cached snapshot does
-            not carry, so it is disabled with an explanation when offline. */}
-        <SearchBox disabled={fromSnapshot} onPick={handleSearchPick} />
+            not carry. A permanently disabled box was dead weight in the header,
+            so it only appears when it works; the feed notice says why. */}
+        {!fromSnapshot && <SearchBox disabled={false} onPick={handleSearchPick} />}
         <ProvenanceBar
           provenance={provenance}
           mode={mode}
@@ -260,11 +254,12 @@ export default function App() {
             detections={analytics?.total_detections ?? null}
             days={windowDays(provenance)}
           />
-          {marks && <BigCount value={hotspots.length} label="Locations on map" />}
+          {marks && <BigCount value={hotspots.length} label="shown" />}
         </section>
 
         <aside className="feed" aria-label="Side panel">
-          <div className="tabs" role="tablist" aria-label="Side panel">
+          <div className="tabs">
+           <div className="tabs__track" role="tablist" aria-label="Side panel">
             <button
               type="button"
               role="tab"
@@ -283,6 +278,7 @@ export default function App() {
             >
               Ask
             </button>
+           </div>
           </div>
 
           {/* Kept mounted while hidden, so the conversation survives a look at
@@ -304,8 +300,8 @@ export default function App() {
             <>
               <div className="feed__head">
                 <div className="feed__title-row">
-                  <h2 className="feed__title">Thermal source feed</h2>
-                  <span className="feed__sort">by days seen</span>
+                  <h2 className="feed__title">Locations</h2>
+                  <span className="feed__sort">Most days seen first</span>
                 </div>
                 <FilterPanel filters={filters} analytics={analytics} onChange={setFilters} />
               </div>
@@ -371,31 +367,31 @@ export default function App() {
                     Showing {hotspots.length.toLocaleString()} of{" "}
                     {totalMatching.toLocaleString()} matching locations, the most
                     persistent first; the response limit cut off the rest. Totals in
-                    the legend and tiles are for the full set.
+                    the legend and totals are for the full set.
                   </div>
                 )}
               </div>
 
               {analytics && (
-                <div className="tiles" aria-label="Totals across all ingested data">
-                  <Tile
-                    value={byClass.get("industrial_fire") ?? 0}
-                    label="Possible industrial fires"
-                    tone="industrial_fire"
-                  />
-                  <Tile
-                    value={byClass.get("persistent_industrial") ?? 0}
-                    label="Persistent sources"
-                    tone="persistent_industrial"
-                  />
-                  <Tile
-                    value={flagged}
-                    label={flagged > 0 ? "⚠ Flagged for review" : "Flagged for review"}
-                  />
-                  <p className="tiles__note">
-                    Locations across all ingested data, independent of the filters above.
+                <section className="summary" aria-labelledby="summary-title">
+                  <h3 className="summary__title" id="summary-title">All ingested data</h3>
+                  <ul className="summary__list">
+                    <SummaryRow
+                      value={byClass.get("industrial_fire") ?? 0}
+                      label="Possible industrial fires"
+                      tone="industrial_fire"
+                    />
+                    <SummaryRow
+                      value={byClass.get("persistent_industrial") ?? 0}
+                      label="Persistent industrial sources"
+                      tone="persistent_industrial"
+                    />
+                    <SummaryRow value={flagged} label="Flagged for review" flag={flagged > 0} />
+                  </ul>
+                  <p className="summary__note">
+                    Counts of locations. The filters above don’t change them.
                   </p>
-                </div>
+                </section>
               )}
 
               <div className="feed__body">
@@ -415,30 +411,27 @@ export default function App() {
   );
 }
 
-function Tile({
+/** One row of the totals list: the class swatch ties the number to the legend. */
+function SummaryRow({
   value,
   label,
   tone,
+  flag = false,
 }: {
   value: number;
   label: string;
   tone?: "industrial_fire" | "persistent_industrial";
+  flag?: boolean;
 }) {
   return (
-    <div className="tile">
-      <div className={`tile__value ${tone ? `tile__value--${tone}` : ""}`}>
-        {value.toLocaleString()}
-      </div>
-      <div className="tile__label">{label}</div>
-    </div>
-  );
-}
-
-function FlameIcon() {
-  return (
-    <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor"
-      strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.07-2.14-.22-4.05 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.15.43-2.29 1-3a2.5 2.5 0 0 0 2.5 2.5z" />
-    </svg>
+    <li className="summary__row">
+      {tone ? (
+        <span className={`dot dot--${tone}`} aria-hidden="true" />
+      ) : (
+        <span className={`summary__flag ${flag ? "is-raised" : ""}`} aria-hidden="true" />
+      )}
+      <span className="summary__label">{label}</span>
+      <span className="summary__value">{value.toLocaleString()}</span>
+    </li>
   );
 }

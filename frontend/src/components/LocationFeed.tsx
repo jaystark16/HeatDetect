@@ -76,14 +76,14 @@ export default function LocationFeed({ marks, selectedId, onSelect }: Props) {
                   </span>
                 </div>
                 <div className="feed-card__metrics">
-                  <span>
-                    PEAK FRP <b>{mark.frp_mw.toFixed(1)} MW</b>
+                  <span title="Peak fire radiative power">
+                    Peak <b>{mark.frp_mw.toFixed(1)} MW</b>
+                  </span>
+                  <span title="Satellite observations">
+                    <b>{mark.observation_count.toLocaleString()}</b> passes
                   </span>
                   <span>
-                    PASSES <b>{mark.observation_count.toLocaleString()}</b>
-                  </span>
-                  <span>
-                    LAST SEEN <b>{formatAge(hoursSince(mark.last_seen))} ago</b>
+                    Seen <b>{formatAge(hoursSince(mark.last_seen))} ago</b>
                   </span>
                 </div>
               </button>

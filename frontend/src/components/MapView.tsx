@@ -220,6 +220,13 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
     map.addControl(new AttributionControl({ compact: true }), "bottom-right");
 
     map.on("load", () => {
+      // Compact attribution opens expanded on first load, where its two lines
+      // ran underneath the map chips. Start it collapsed; the (i) button
+      // still reveals every credit.
+      container
+        .querySelector(".maplibregl-ctrl-attrib")
+        ?.classList.remove("maplibregl-compact-show");
+
       map.addSource("locations", { type: "geojson", data: EMPTY });
       map.addLayer({
         id: "marks",
@@ -436,42 +443,50 @@ export default function MapView({ hotspots, selectedId, onSelect, focus }: Props
   return (
     <div className="mapview">
       <div ref={containerRef} className="mapview__canvas" />
-      <div className="map-switch" role="group" aria-label="Basemap">
-        <button
-          type="button"
-          className={basemap === "satellite" ? "is-active" : ""}
-          aria-pressed={basemap === "satellite"}
-          onClick={() => setBasemap("satellite")}
-        >
-          Satellite
-        </button>
-        <button
-          type="button"
-          className={basemap === "street" ? "is-active" : ""}
-          aria-pressed={basemap === "street"}
-          onClick={() => setBasemap("street")}
-        >
-          Street
-        </button>
-        {basemap === "satellite" && (
+      {/* Satellite/Street is a choice of one, so it is a segmented control.
+          Labels and 3D are independent on/off switches, so they sit apart
+          and read as toggles; drawing all four alike made "Satellite" and
+          "Labels" look like the same kind of selection. */}
+      <div className="map-switch">
+        <div className="map-switch__segment" role="group" aria-label="Basemap">
           <button
             type="button"
-            className={labels ? "is-active" : ""}
-            aria-pressed={labels}
-            onClick={() => setLabels((v) => !v)}
+            className={basemap === "satellite" ? "is-active" : ""}
+            aria-pressed={basemap === "satellite"}
+            onClick={() => setBasemap("satellite")}
           >
-            Labels
+            Satellite
           </button>
-        )}
-        <button
-          type="button"
-          className={relief3d ? "is-active" : ""}
-          aria-pressed={relief3d}
-          title="Raise real elevation and tilt the view"
-          onClick={() => setRelief3d((v) => !v)}
-        >
-          3D terrain
-        </button>
+          <button
+            type="button"
+            className={basemap === "street" ? "is-active" : ""}
+            aria-pressed={basemap === "street"}
+            onClick={() => setBasemap("street")}
+          >
+            Street
+          </button>
+        </div>
+        <div className="map-switch__toggles" role="group" aria-label="Map layers">
+          {basemap === "satellite" && (
+            <button
+              type="button"
+              className={`map-toggle ${labels ? "is-active" : ""}`}
+              aria-pressed={labels}
+              onClick={() => setLabels((v) => !v)}
+            >
+              Labels
+            </button>
+          )}
+          <button
+            type="button"
+            className={`map-toggle ${relief3d ? "is-active" : ""}`}
+            aria-pressed={relief3d}
+            title="Raise real elevation and tilt the view"
+            onClick={() => setRelief3d((v) => !v)}
+          >
+            3D terrain
+          </button>
+        </div>
       </div>
     </div>
   );

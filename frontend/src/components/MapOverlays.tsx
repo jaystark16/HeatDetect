@@ -19,7 +19,7 @@ export function MapLegend({ analytics, active, onToggle }: LegendProps) {
 
   return (
     <div className="overlay overlay--legend">
-      <p className="overlay__eyebrow">Classification · locations</p>
+      <p className="overlay__title">Locations by class</p>
       <div className="legend">
         {CLASS_ORDER.map((cls) => {
           const pressed = active === cls;
@@ -41,7 +41,7 @@ export function MapLegend({ analytics, active, onToggle }: LegendProps) {
           );
         })}
       </div>
-      <p className="legend__hint">Size ∝ FRP · hollow = unclassified</p>
+      <p className="legend__hint">Dot size follows fire radiative power.</p>
     </div>
   );
 }
@@ -51,15 +51,19 @@ interface RegionProps {
   days: number | null;
 }
 
-/** What area and how much data the map covers, in one line. */
+/**
+ * What area and how much data the map covers, in one line.
+ *
+ * "Analysis area", not "India": the bounding box also covers neighbouring
+ * countries (SOUL.md, tone and voice).
+ */
 export function RegionChip({ detections, days }: RegionProps) {
   return (
     <div className="overlay overlay--region">
-      <span className="dot dot--brand" aria-hidden="true" />
-      <strong>India region</strong>
+      <strong>Analysis area</strong>
       {detections !== null && (
         <span className="overlay__muted">
-          · {detections.toLocaleString()} detections
+          {detections.toLocaleString()} detections
           {days !== null && ` over ${days} days`}
         </span>
       )}
@@ -72,11 +76,12 @@ interface CountProps {
   label: string;
 }
 
+/** How many locations the current filters put on the map. */
 export function BigCount({ value, label }: CountProps) {
   return (
-    <div className="overlay--count" aria-live="polite">
-      <div className="big-count">{value.toLocaleString()}</div>
-      <div className="overlay__eyebrow">{label}</div>
+    <div className="overlay overlay--count" aria-live="polite">
+      <strong>{value.toLocaleString()}</strong>
+      <span className="overlay__muted">{label}</span>
     </div>
   );
 }
