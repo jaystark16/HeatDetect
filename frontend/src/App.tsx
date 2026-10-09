@@ -197,6 +197,9 @@ export default function App() {
             mode,
             selected: detail,
             now: Date.now(),
+            // The same source the detail panel uses, so a looked-up location
+            // shows exactly the evidence its panel would.
+            loadDetail: async (id: string) => (await api.detail(id)).data,
           }
         : null,
     [allMarks, analytics, model, provenance, fromSnapshot, snapshot, mode, detail],

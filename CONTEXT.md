@@ -42,7 +42,7 @@ from memory. The pipeline appends continuously, so counts grow. Permanent rules 
 | Detection window | 2026-07-25 → 2026-10-06 (~73 days) |
 | OSM facilities / land parcels | 39,493 / 74,955 (54 cached tiles, 1.7 MB) |
 | Locations with surveyed industrial context | **16,715 of 19,889** (84%) |
-| Backend tests / frontend tests / eval scenarios | **291** / **56** / **18** |
+| Backend tests / frontend tests / eval scenarios | **291** / **69** / **18** |
 | Live site | HTTP 200, auto-rebuilt every 3 h |
 
 **Label distribution (locations):** `natural_fire` 10,140 · `unknown` 9,528 ·
@@ -64,7 +64,7 @@ Check this before claiming anything works.
 | Data refresh in CI | ✅ `FIRMS_MAP_KEY` secret is set, so each run backfills 60 days |
 | Backend API (Render) | ❌ Not deployed. No `API_BASE_URL` variable, so the site serves the committed snapshot |
 | Assistant proxy (Cloudflare) | Dropped by the owner on 2026-10-08. The public build calls Gemini directly instead (`direct.ts`) |
-| Gemini on the public site | Needs the `GEMINI_API_KEY` secret, which the owner sets. Without it the Ask tab answers from the data only |
+| Gemini on the public site | Needs the `GEMINI_API_KEY` secret, which the owner sets. Without it the Ask tab answers from keywords only. With it, Gemini researches any question over all locations (tools, conversation memory) — verified locally 2026-10-09 |
 
 Configured: secret `FIRMS_MAP_KEY`. **No repository variables at all.**
 

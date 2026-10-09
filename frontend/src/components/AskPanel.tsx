@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { buildBriefing, type Fact } from "../assistant/briefing";
-import { askGemini, GEMINI_CONFIGURED, type Depth, type GeminiAnswer } from "../assistant/gemini";
+import type { Fact } from "../assistant/briefing";
+import {
+  askAgent,
+  GEMINI_CONFIGURED,
+  type Depth,
+  type Exchange,
+  type GeminiAnswer,
+} from "../assistant/gemini";
 import {
   answer as computeAnswer,
   keywordRoute,
@@ -49,6 +55,20 @@ interface LocalTurn {
 }
 
 type Turn = GeminiTurn | LocalTurn;
+
+/** The conversation as the user saw it, so follow-ups make sense to Gemini. */
+function toHistory(turns: Turn[]): Exchange[] {
+  return turns.map((t) => ({
+    question: t.question,
+    answer:
+      t.kind === "gemini"
+        ? [...t.result.answer, ...t.result.analysis]
+            .filter((v) => v.ok)
+            .map((v) => v.sentence.text)
+            .join(" ") || "(no answer shown)"
+        : (t.wording ?? t.answer.summary),
+  }));
+}
 
 /** Replies that accept the offer of a deeper analysis. */
 const AFFIRMATIVE =
@@ -174,15 +194,14 @@ export default function AskPanel({ context, onShow }: Props) {
 
       let turn: Turn;
       if (GEMINI_CONFIGURED) {
-        const briefing = buildBriefing(q, context);
         try {
-          const result = await askGemini(q, briefing, depth);
+          const result = await askAgent(q, context, toHistory(turns), depth);
           turn = {
             kind: "gemini",
             id: nextId.current++,
             question: q,
             result,
-            facts: briefing.facts,
+            facts: result.facts,
           };
         } catch (cause) {
           turn = await askLocally(
@@ -435,6 +454,12 @@ function GeminiTurnView({
             {fellBack && ` · after ${result.tried.length} busy attempt${result.tried.length === 1 ? "" : "s"}`}
           </span>
         </p>
+
+        {result.lookups.length > 0 && (
+          <p className="turn__lookups">
+            Looked up: {[...new Set(result.lookups)].join("; ")}
+          </p>
+        )}
 
         {answerShown ? (
           <Sentences verdicts={result.answer} facts={facts} onShow={onShow} />

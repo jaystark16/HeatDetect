@@ -263,6 +263,20 @@ describe("the proxy", () => {
     expect(j.model).toBe(MODELS[1]);
   });
 
+  it("moves straight past a rate-limited model, whose quota is its own", async () => {
+    const calls: string[] = [];
+    await handle(
+      post(),
+      env,
+      (async (u: string) => {
+        calls.push(modelOf(u));
+        return modelOf(u) === MODELS[0] ? google(429) : google(200);
+      }) as unknown as typeof fetch,
+      noWait,
+    );
+    expect(calls).toEqual([MODELS[0], MODELS[1]]);
+  });
+
   it("does not retry a retired model", async () => {
     const calls: string[] = [];
     await handle(

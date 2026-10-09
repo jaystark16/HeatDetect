@@ -48,7 +48,13 @@ const MODEL_TIMEOUT_MS = 45_000;
  * the stronger model to a fast one from Flash-Lite.
  */
 export const RETRY_DELAYS_MS = [3_000, 8_000];
-const BUSY = new Set([429, 503]);
+/**
+ * Only an overloaded model (503) is worth asking again. A rate-limited one
+ * (429) has used its own free-tier quota, which is per model, so the next model
+ * is tried at once: measured 2026-10-09, retrying 429s turned a follow-up
+ * question into a 188 s wait.
+ */
+const BUSY = new Set([503]);
 
 /** Statuses that mean "try the next model", not "the request is wrong". */
 const RETRYABLE = new Set([404, 408, 429, 500, 502, 503, 504]);
@@ -82,11 +88,38 @@ function json(body, status, origin) {
 }
 
 /** Shape check on what the dashboard sends. Anything else is refused. */
+const MAX_TURNS = 40;
+const MAX_TOOLS = 8;
+
+/**
+ * Shape check on what the dashboard sends. Anything else is refused. A
+ * request is either one prompt or a conversation (which may carry tool calls
+ * and results), optionally with a JSON schema or tool declarations.
+ */
 function validate(body) {
   if (!body || typeof body !== "object") return "body must be a JSON object";
   if (typeof body.system !== "string" || body.system.length === 0) return "system must be a string";
-  if (typeof body.prompt !== "string" || body.prompt.length === 0) return "prompt must be a string";
-  if (!body.schema || typeof body.schema !== "object") return "schema must be an object";
+  const hasPrompt = typeof body.prompt === "string" && body.prompt.length > 0;
+  const hasContents = Array.isArray(body.contents) && body.contents.length > 0;
+  if (!hasPrompt && !hasContents) return "prompt or contents is required";
+  if (hasContents) {
+    if (body.contents.length > MAX_TURNS) return "too many turns";
+    for (const turn of body.contents) {
+      if (!turn || (turn.role !== "user" && turn.role !== "model") || !Array.isArray(turn.parts)) {
+        return "each turn needs a role of user or model and a parts array";
+      }
+    }
+  }
+  if (body.schema !== undefined && (typeof body.schema !== "object" || body.schema === null)) {
+    return "schema must be an object";
+  }
+  if (body.tools !== undefined && (!Array.isArray(body.tools) || body.tools.length > MAX_TOOLS)) {
+    return "tools must be an array of at most " + MAX_TOOLS;
+  }
+  if (body.models !== undefined) {
+    if (!Array.isArray(body.models) || body.models.length === 0) return "models must be a non-empty array";
+    if (body.models.some((m) => !MODELS.includes(m))) return "models must be from the allowed list";
+  }
   return null;
 }
 
@@ -97,10 +130,10 @@ async function callModel(model, body, key, fetchImpl) {
     signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
     body: JSON.stringify({
       systemInstruction: { parts: [{ text: body.system }] },
-      contents: [{ role: "user", parts: [{ text: body.prompt }] }],
+      contents: body.contents ?? [{ role: "user", parts: [{ text: body.prompt }] }],
+      ...(body.tools?.length ? { tools: [{ functionDeclarations: body.tools }] } : {}),
       generationConfig: {
-        responseMimeType: "application/json",
-        responseSchema: body.schema,
+        ...(body.schema ? { responseMimeType: "application/json", responseSchema: body.schema } : {}),
         temperature: 0.2,
         maxOutputTokens: MAX_OUTPUT_TOKENS,
       },
@@ -110,9 +143,11 @@ async function callModel(model, body, key, fetchImpl) {
 
   const data = await response.json();
   const candidate = data?.candidates?.[0];
-  const text = (candidate?.content?.parts ?? []).map((p) => p.text ?? "").join("");
-  if (!text) return { ok: false, status: 502, reason: candidate?.finishReason ?? "empty response" };
-  return { ok: true, text, usage: data.usageMetadata ?? null };
+  const parts = candidate?.content?.parts ?? [];
+  if (parts.length === 0) return { ok: false, status: 502, reason: candidate?.finishReason ?? "empty response" };
+  const text = parts.map((p) => p.text ?? "").join("");
+  // The message is returned whole: a tool conversation must resend it as-is.
+  return { ok: true, text, content: { role: "model", parts }, usage: data.usageMetadata ?? null };
 }
 
 const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -148,7 +183,9 @@ export async function handle(request, env, fetchImpl = fetch, sleep = defaultSle
   if (invalid) return json({ error: invalid }, 400, allowed);
 
   const tried = [];
-  models: for (const model of MODELS) {
+  // A tool conversation pins one model; otherwise try the allowed list.
+  const candidates = body.models ?? MODELS;
+  models: for (const model of candidates) {
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       if (attempt > 0) await sleep(RETRY_DELAYS_MS[attempt - 1]);
       let result;
@@ -162,7 +199,7 @@ export async function handle(request, env, fetchImpl = fetch, sleep = defaultSle
       }
       if (result.ok) {
         return json(
-          { model, text: result.text, usage: result.usage, ms: Date.now() - started, tried },
+          { model, text: result.text, content: result.content, usage: result.usage, ms: Date.now() - started, tried },
           200,
           allowed,
         );
@@ -170,7 +207,7 @@ export async function handle(request, env, fetchImpl = fetch, sleep = defaultSle
       tried.push({ model, status: result.status, reason: result.reason, ms: Date.now() - started });
       // A request Google rejects as malformed will be rejected by every model.
       if (!RETRYABLE.has(result.status)) break models;
-      // Busy: wait and ask the same model again. Gone or erroring: move on.
+      // Overloaded: wait and ask the same model again. Rate-limited, gone or erroring: move on.
       if (!BUSY.has(result.status)) continue models;
     }
   }

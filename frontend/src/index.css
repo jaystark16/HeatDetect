@@ -1813,3 +1813,9 @@ details.ask__model[open] summary {
     background: rgba(28, 28, 30, 0.94) !important;
   }
 }
+
+.turn__lookups {
+  margin: 0 0 var(--s2);
+  font-size: 11.5px;
+  color: var(--ink-muted);
+}

@@ -66,6 +66,8 @@ export interface AskContext {
   /** Detail of the location currently open in the side panel, if any. */
   selected: HotspotDetail | null;
   now: number;
+  /** Full evidence for any location, for the assistant to look up. Rejects on a failed fetch. */
+  loadDetail?: (id: string) => Promise<HotspotDetail | null>;
 }
 
 export interface AnswerItem {

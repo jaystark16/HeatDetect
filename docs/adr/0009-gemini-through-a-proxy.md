@@ -65,6 +65,24 @@ The team asked for straight answers and does not mind waiting:
   deep answer — 15 fires, 2,389 detections, 6 in 24 h, the strongest at 20.962° N,
   85.174° E, 30.6 MW, 38 days — matched an independent recount from the snapshot.
 
+## Revised 2026-10-09: Gemini looks things up
+
+A fixed briefing limited what could be asked; questions about a region, a class in a
+time window, or one spot came back unanswerable. Gemini now researches first: it may call
+`search_locations` (every location, filtered by class, days seen, peak FRP, recency, an
+area box or a point) and `location_detail` (one location's evidence), up to four rounds,
+and each result becomes more numbered facts. It then answers from all of them under the
+same per-sentence citation check. The last four exchanges are kept so follow-ups work.
+
+A named place has no gazetteer behind it: Gemini supplies an approximate box, and the
+search fact says "the assistant's approximation of …, not an official boundary". A
+sentence may name the place only by citing that fact. A rate-limited model (429) is now
+skipped at once, since free-tier quotas are per model; only 503 is retried.
+
+Measured locally, direct mode: three natural questions answered in 30–190 s, every number
+matching an independent recount; one wording error (a mixed-class count described as
+industrial) fixed in the prompt and re-verified.
+
 ## Consequences
 
 - Questions and the briefing are sent to Google; the Ask tab says so.

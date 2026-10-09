@@ -51,20 +51,27 @@ The model never overrides a rule verdict. Evidence sentences come from templates
 ## Ask tab (assistant)
 
 ```
-data rows ─► briefing.ts (~75 numbered computed facts)
-                 │
-                 ├─► Gemini, through proxy/worker.mjs (holds the key)
-                 ├─► fallback: on-device Qwen3-1.7B (WebLLM/WebGPU, ~940 MB,
-                 │             downloaded only when the visitor presses a button)
-                 └─► fallback: the computed answer alone
-                 ▼
-           verify.ts (verifyCited): every sentence must cite facts that support its
-           numbers, names, source types, comparisons and causes; certainty words are
-           refused; failing sentences are withheld with the reason shown
+question + conversation so far + briefing.ts (~75 numbered computed facts)
+   │
+   ▼  1. research (gemini.ts askAgent): Gemini calls tools (tools.ts) as needed
+      search_locations  — every location, by class, days seen, peak FRP, recency,
+                          an area box (a named place = Gemini's approximate box,
+                          labelled as such) or a point and radius
+      location_detail   — the full evidence for the location nearest a point
+      code runs each over all loaded locations → more numbered facts
+   ▼  2. answer: Gemini writes a natural reply from all the facts, citing them
+   ▼
+verify.ts (verifyCited): every sentence must cite facts that support its numbers,
+names, source types, comparisons and causes; certainty words are refused; failing
+sentences are withheld with the reason shown
+
+transport: direct.ts (browser, key from the GEMINI_API_KEY secret at build) or
+proxy/worker.mjs (when ASSISTANT_URL is set). Fallbacks if Gemini cannot answer:
+on-device Qwen3-1.7B (opt-in, ~940 MB), then the computed answer alone.
 ```
 
-Each fallback says why it happened. The key never reaches the browser, and CI fails if a
-Google key pattern is committed.
+Questions are open-ended: the briefing is a summary, not a limit. Each fallback says why it
+happened. CI fails if a Google key pattern is committed.
 
 ## Stack
 

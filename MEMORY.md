@@ -3,6 +3,27 @@
 Append-only, newest first. Record decisions and their reasons, failures and why,
 and debugging discoveries. Don't repeat what git history or the code already says.
 
+## 2026-10-09
+
+- **The Ask tab looks things up instead of reading a fixed briefing.** Gemini only saw ~75
+  precomputed facts, so anything outside them ("Gujarat this week", "what's near this
+  point") came back unanswerable — the "fixed questions" complaint. It now calls tools
+  that run over every location (`tools.ts`), with the conversation kept for follow-ups.
+  Measured live: "anything burning in Gujarat this week?" → 110 locations (8 persistent
+  industrial, 22 vegetation, 80 unclassified); the follow-up "only the industrial ones?"
+  → 8 and 0; "is 23.75, 86.42 an industrial site?" → nearest location unclassified, 14 of
+  27 within 5 km persistent industrial. Every number matched an independent recount.
+- **A named place is Gemini's approximate box, and says so.** No gazetteer exists offline.
+  The search fact reads "the assistant's approximation of Gujarat (not an official
+  boundary)", and the citation check lets a sentence name the place only by citing it.
+- **Rate limits are per model: move on, don't retry.** Retrying 429s made a follow-up take
+  188 s. Only 503 (overloaded) is retried now; 429 goes straight to the next model.
+- **A count must be described as what it counts.** Gemini called 27 locations of any class
+  (12 unclassified) "consistent with industrial activity". No mechanical check catches
+  that; the prompt now requires the class breakdown, and the re-run was correct.
+- **The live site still has no Gemini.** The `GEMINI_API_KEY` secret is not set, so the
+  public Ask tab answers from keywords only. The owner has to set it.
+
 ## 2026-10-08
 
 - **Same-pass context made the model better; gradient boosting made it worse.** Adding
