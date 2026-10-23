@@ -5,6 +5,19 @@ and debugging discoveries. Don't repeat what git history or the code already say
 
 ## 2026-10-23
 
+- **Ollama model order chosen by measurement, not by size.** The owner asked for the best
+  free model. All seven were run through the real Ask pipeline on up to 19 questions,
+  every answer recounted by hand: nemotron-3-super first (most natural and complete),
+  gemma4:31b second (no error found, fastest), then beam and gpt-oss:120b. The biggest,
+  nemotron-3-ultra, took 51 s per answer. Details:
+  `docs/findings/2026-10-23-ollama-model-comparison.md`.
+- **"Be natural" alone did not make any model natural.** A voice prompt with concrete rules
+  and a before/after example did.
+- **Spelled-out numbers bypassed the citation check.** Asking for natural wording produced
+  "Seventy-two sources"; the check only read digits. It now reads number words, "94
+  thousand", "about 94,000" (rounding only when hedged) and percentages of stated
+  fractions. "Nothing confirms an accident" is no longer withheld for "confirms".
+
 - **States are searched by their real boundary, not a box the model guesses.** The
   model's "Odisha" box returned 66 persistent sources; by boundary there are 36. The
   other 30 were in Chhattisgarh (16), West Bengal (7), Jharkhand (5) and Andhra Pradesh (2).

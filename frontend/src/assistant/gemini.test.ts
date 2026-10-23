@@ -160,6 +160,44 @@ describe("checking a cited sentence", () => {
     ).toBe(false);
   });
 
+  it("checks spelled-out and rounded numbers like digits (observed: 'Seventy-two', '94 thousand')", () => {
+    const facts = [
+      { id: 1, text: "Search of all 32,138 locations for persistent industrial sources, in Odisha: 72 matches." },
+      { id: 2, text: "94,238 detections at 32,138 locations; 3 within 50 km of the point." },
+    ];
+    const check = (text: string, cites = [1, 2]) => verifyCited({ text, cites }, facts, "how many?");
+    expect(check("Seventy-two persistent industrial sources are in Odisha.").ok).toBe(true);
+    expect(check("Seventy-three persistent industrial sources are in Odisha.").ok).toBe(false);
+    expect(check("Three spots showed heat, all persistent industrial sources.").ok).toBe(true);
+    expect(check("Four spots showed heat.").ok).toBe(false);
+    expect(check("There were about 94,000 detections.").ok).toBe(true);
+    expect(check("There were about 95,000 detections.").ok).toBe(false);
+    expect(check("There were 94,000 detections.").ok).toBe(false); // rounding needs a hedge
+    expect(check("There were roughly 94 thousand detections.").ok).toBe(true);
+    expect(check("There were 94k detections.").ok).toBe(true);
+    expect(check("Around ninety-four thousand detections were made.").ok).toBe(true);
+    expect(check("There were 9 lakh detections.").ok).toBe(false);
+    expect(check("One of them is a persistent industrial source with 72 sightings.").ok).toBe(true);
+  });
+
+  it("reads a percentage as the fraction a fact states (observed: 0.926 written as 93%)", () => {
+    const facts = [{ id: 1, text: "natural_fire: precision 0.926, recall 0.971." }];
+    const check = (text: string) => verifyCited({ text, cites: [1] }, facts, "trust?");
+    expect(check("It is right about 93% of the time on vegetation fires.").ok).toBe(true);
+    expect(check("Its recall there is 97.1 percent.").ok).toBe(true);
+    expect(check("It is right 95% of the time.").ok).toBe(false);
+  });
+
+  it("lets a negated certainty word through as the hedge it is (observed: withheld for 'confirms')", () => {
+    const check = (text: string) => verifyCited({ text, cites: [top.id] }, briefing.facts, "q");
+    expect(check("Nothing in the data confirms an accident there.").ok).toBe(true);
+    expect(check("It is not confirmed as a fire.").ok).toBe(true);
+    expect(check("The data cannot say for sure what is burning.").ok).toBe(true);
+    expect(check("This is definitely an industrial accident.").ok).toBe(false);
+    expect(check("There is no doubt this is confirmed.").ok).toBe(false);
+    expect(check("Not only that, it is confirmed by the rules and definitely a fire.").ok).toBe(false);
+  });
+
   it("allows hedged interpretation", () => {
     const v = verifyCited(
       { text: `Being seen on ${days} distinct days is consistent with a long-running heat source.`, cites: [top.id] },

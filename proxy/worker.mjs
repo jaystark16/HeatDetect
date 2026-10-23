@@ -43,12 +43,19 @@ export const MODELS = [
 const OLLAMA = "https://ollama.com/api/chat";
 
 /**
- * Ollama Cloud models usable on the free plan, best first. Measured
- * 2026-10-23: gpt-oss:120b answered in ~1.5 s and calls tools; DeepSeek,
- * Kimi, GLM and MiniMax returned 402 "not in the Free plan". None enforced a
- * JSON schema, so the dashboard checks the shape of every reply itself.
+ * Ollama Cloud models usable on the free plan, best first. Ranked 2026-10-23
+ * by running HeatDetect's own Ask pipeline (tools, cited answer, citation
+ * check) on up to 19 questions over the live data, every shown answer
+ * recounted by hand (docs/findings/2026-10-23-ollama-model-comparison.md):
+ *   nemotron-3-super  18/19 answered, median 13 s; most natural and complete
+ *   gemma4:31b        18/19 answered, median 4 s; no error found, terser
+ *   beam              12/14 answered, median 17 s; richest, one ranking misordered
+ *   gpt-oss:120b      answered one question without looking it up
+ * Not used: nemotron-3-ultra (median 51 s), nemotron-3-nano:30b and
+ * gpt-oss:20b (less accurate). None enforced a JSON schema, so the dashboard
+ * checks the shape of every reply itself.
  */
-export const OLLAMA_MODELS = ["gpt-oss:120b", "gemma4:31b", "gpt-oss:20b"];
+export const OLLAMA_MODELS = ["nemotron-3-super", "gemma4:31b", "beam", "gpt-oss:120b"];
 
 const DEFAULT_ORIGINS = "https://jaystark16.github.io";
 const MAX_BODY_BYTES = 256 * 1024;

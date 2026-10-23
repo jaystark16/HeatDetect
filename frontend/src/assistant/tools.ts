@@ -317,9 +317,15 @@ function searchLocations(args: Record<string, unknown>, ctx: AskContext): ToolRu
 
   const counts = new Map<ThermalClass, number>();
   for (const r of rows) counts.set(r.m.label, (counts.get(r.m.label) ?? 0) + 1);
-  const breakdown = CLASSES.filter((c) => counts.get(c))
-    .map((c) => `${counts.get(c)!.toLocaleString()} ${NOUN[c][counts.get(c) === 1 ? 0 : 1]}`)
-    .join(", ");
+  // The industrial total is given because models may not add numbers up
+  // themselves; observed: "97" (94 + 3) withheld when comparing two states.
+  const fires = counts.get("industrial_fire") ?? 0;
+  const persistent = counts.get("persistent_industrial") ?? 0;
+  const breakdown =
+    CLASSES.filter((c) => counts.get(c))
+      .map((c) => `${counts.get(c)!.toLocaleString()} ${NOUN[c][counts.get(c) === 1 ? 0 : 1]}`)
+      .join(", ") +
+    (fires && persistent ? `; ${(fires + persistent).toLocaleString()} of them possible or persistent industrial` : "");
 
   const facts: ToolFact[] = [
     {

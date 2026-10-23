@@ -25,6 +25,26 @@ const NUMBER = /-?\d[\d,]*(?:\.\d+)?/g;
 const CERTAINTY =
   /\b(confirmed|confirms|definitely|certainly|undoubtedly|proves?|proven|proof that|guaranteed|without doubt|for sure)\b/i;
 
+const CERTAINTY_ALL = new RegExp(CERTAINTY.source, "gi");
+
+/** A negation within the three words before a certainty word. */
+const NEGATED = /\b(?:not|no|nothing|never|cannot|can't|isn't|aren't|wasn't|doesn't|don't|didn't|without|neither|nor)\b(?:\W+\w+){0,3}\W*$/i;
+const AFFIRMING_DOUBT = /\b(?:no|without|beyond)\s+(?:a\s+)?doubt\b/i;
+
+/**
+ * The first certainty word used as a claim, or null. "Nothing in the data
+ * confirms an accident" is the hedge this project wants, and was withheld
+ * for the word "confirms" (observed 2026-10-23); "no doubt it is confirmed"
+ * is still a claim.
+ */
+function claimedCertainty(text: string): string | null {
+  for (const m of text.matchAll(CERTAINTY_ALL)) {
+    const before = text.slice(Math.max(0, (m.index ?? 0) - 60), m.index);
+    if (!NEGATED.test(before) || AFFIRMING_DOUBT.test(before)) return m[0];
+  }
+  return null;
+}
+
 /** Proper nouns the model may use without them appearing in the facts. */
 const ALWAYS_ALLOWED = new Set(["NASA", "FIRMS", "India", "OpenStreetMap", "VIIRS", "MODIS", "MW", "km"]);
 
@@ -73,6 +93,92 @@ function allowedNumbers(answer: Answer, question: string): number[] {
   return numbersIn(source).map(Number).filter(Number.isFinite);
 }
 
+// ---------------------------------------------------------- written numbers --
+//
+// Models write "Seventy-two sources", "about 94,000" or "94 thousand" once
+// asked to sound natural (observed 2026-10-23). Spelled-out numbers used to
+// pass unchecked, so all of these are read as values and checked like digits.
+
+const SMALL: Record<string, number> = {
+  zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9,
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16,
+  seventeen: 17, eighteen: 18, nineteen: 19, twenty: 20, thirty: 30, forty: 40, fifty: 50,
+  sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+const SCALE: Record<string, number> = { thousand: 1e3, k: 1e3, lakh: 1e5, lakhs: 1e5, million: 1e6, crore: 1e7, crores: 1e7 };
+
+const WORD = `(?:${Object.keys(SMALL).join("|")}|hundred|thousand|lakhs?|million|crores?)`;
+const SPELLED = new RegExp(`\\b${WORD}(?:(?:[\\s-]+(?:and[\\s-]+)?)${WORD})*\\b`, "gi");
+const SCALED_DIGITS = /(-?\d[\d,]*(?:\.\d+)?)\s*(thousand|k|lakhs?|million|crores?)\b/gi;
+const HEDGE_BEFORE = /\b(?:about|around|roughly|nearly|almost|approximately|some|over|under|close to)\s*$|~\s*$/i;
+
+function parseSpelled(phrase: string): number | null {
+  let total = 0;
+  let current = 0;
+  for (const word of phrase.toLowerCase().split(/[\s-]+/).filter((w) => w && w !== "and")) {
+    if (word in SMALL) current += SMALL[word];
+    else if (word === "hundred") current = (current || 1) * 100;
+    else if (word in SCALE) {
+      total += (current || 1) * SCALE[word];
+      current = 0;
+    } else return null;
+  }
+  return total + current;
+}
+
+interface Claim {
+  value: number;
+  /** As written, to read its precision. */
+  written: string;
+  /** Hedged ("about 94,000") or scaled ("94 thousand"): may be rounded to its magnitude. */
+  approximate: boolean;
+  /** "93%" for a fact's 0.926 (observed 2026-10-23, withheld before this). */
+  percent?: boolean;
+}
+
+const PERCENT_AFTER = /^\s*(?:%|per\s?cent\b)/i;
+
+function claimedNumbers(text: string): Claim[] {
+  const claims: Claim[] = [];
+  const hedged = (at: number) => HEDGE_BEFORE.test(text.slice(Math.max(0, at - 20), at));
+  // Each pass blanks what it read, same length, so positions still match `text`.
+  let masked = text;
+  const blank = (at: number, length: number) => {
+    masked = masked.slice(0, at) + " ".repeat(length) + masked.slice(at + length);
+  };
+
+  for (const m of [...masked.matchAll(SCALED_DIGITS)]) {
+    const value = Number(m[1].replace(/,/g, "")) * SCALE[m[2].toLowerCase()];
+    claims.push({ value, written: String(value), approximate: true });
+    blank(m.index ?? 0, m[0].length);
+  }
+  for (const m of [...masked.matchAll(SPELLED)]) {
+    // "one of them", "the one at": a lone "one" is a pronoun, not a count.
+    if (/^one$/i.test(m[0])) continue;
+    const value = parseSpelled(m[0]);
+    if (value === null) continue;
+    const scaled = /thousand|lakh|million|crore/i.test(m[0]);
+    claims.push({ value, written: String(value), approximate: scaled || hedged(m.index ?? 0) });
+    blank(m.index ?? 0, m[0].length);
+  }
+  for (const m of [...masked.matchAll(NUMBER)]) {
+    const written = m[0].replace(/,/g, "");
+    const at = m.index ?? 0;
+    const percent = PERCENT_AFTER.test(text.slice(at + m[0].length, at + m[0].length + 9));
+    claims.push({ value: Number(written), written, approximate: hedged(at), percent });
+  }
+  return claims;
+}
+
+/** "about 94,000" for 94,238: equal once the allowed value is rounded to the written magnitude. */
+function roundsTo(claim: Claim, allowed: number[]): boolean {
+  if (!claim.approximate || !Number.isInteger(claim.value) || claim.value === 0) return false;
+  const zeros = String(Math.abs(claim.value)).match(/0+$/)?.[0].length ?? 0;
+  if (zeros === 0) return false;
+  const unit = 10 ** zeros;
+  return allowed.some((a) => Math.round(Math.abs(a) / unit) * unit === Math.abs(claim.value));
+}
+
 /** A written number passes if it equals an allowed value rounded to its precision. */
 function supported(written: string, allowed: number[]): boolean {
   const value = Number(written);
@@ -106,9 +212,9 @@ export function verifyWording(text: string, answer: Answer, question: string): V
   if (!trimmed) return { ok: false, reason: "the model returned nothing" };
   if (trimmed.length > MAX_LENGTH) return { ok: false, reason: "the model's answer ran too long" };
 
-  const certainty = trimmed.match(CERTAINTY);
+  const certainty = claimedCertainty(trimmed);
   if (certainty) {
-    return { ok: false, reason: `it claimed certainty ("${certainty[0]}") the data cannot support` };
+    return { ok: false, reason: `it claimed certainty ("${certainty}") the data cannot support` };
   }
 
   const allowed = allowedNumbers(answer, question);
@@ -240,15 +346,28 @@ export function verifyCited(
   const cited = citedFacts.map((f) => f.text).join(" ");
   const lookups = citedFacts.map((f) => f.section ?? "").filter((s) => s.startsWith("lookup:"));
 
-  const certainty = text.match(CERTAINTY);
-  if (certainty) return fail(`it claimed certainty ("${certainty[0]}") the data cannot support`);
+  const certainty = claimedCertainty(text);
+  if (certainty) return fail(`it claimed certainty ("${certainty}") the data cannot support`);
 
-  const allowed = numbersIn(`${cited} ${question}`).map(Number).filter(Number.isFinite);
+  // Anything the visitor typed may be echoed back, spelled out or not.
+  const allowed = [
+    ...numbersIn(`${cited} ${question}`).map(Number),
+    ...claimedNumbers(question).map((c) => c.value),
+  ].filter(Number.isFinite);
   // Citation markers like "[3]" inside the text are references, not claims.
-  const claimed = numbersIn(text.replace(/\[\d+(?:\s*,\s*\d+)*\]/g, " "));
-  const unsupported = claimed.filter((x) => !supported(x, allowed));
+  const claimed = claimedNumbers(text.replace(/\[\d+(?:\s*,\s*\d+)*\]/g, " "));
+  // A percentage may restate a fraction the facts give (precision 0.926 as 93%).
+  const asPercent = allowed.filter((a) => a > 0 && a <= 1).map((a) => a * 100);
+  const unsupported = claimed.filter(
+    (c) =>
+      !supported(c.written, allowed) &&
+      !roundsTo(c, allowed) &&
+      !(c.percent && (supported(c.written, asPercent) || roundsTo(c, asPercent))),
+  );
   if (unsupported.length) {
-    return fail(`it stated ${unsupported.slice(0, 3).join(", ")}, which its cited facts do not contain`);
+    return fail(
+      `it stated ${unsupported.slice(0, 3).map((c) => c.written).join(", ")}, which its cited facts do not contain`,
+    );
   }
 
   const lowerCited = cited.toLowerCase();
@@ -292,6 +411,6 @@ export function verifyFollowUp(question: string, facts: CitableFact[]): boolean 
   const all = facts.map((f) => f.text).join(" ");
   const allowed = numbersIn(all).map(Number);
   if (numbersIn(question).some((x) => !supported(x, allowed))) return false;
-  if (CERTAINTY.test(question)) return false;
+  if (claimedCertainty(question)) return false;
   return midSentenceProperNouns(question).every((w) => ALWAYS_ALLOWED.has(w) || all.includes(w));
 }
