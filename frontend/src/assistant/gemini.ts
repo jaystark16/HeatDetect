@@ -290,7 +290,7 @@ export async function askAgent(
     const responses = [];
     for (const call of calls) {
       const run = await runTool(call.name, call.args ?? {}, ctx);
-      lookups.push(run.summary);
+      if (!run.error) lookups.push(run.summary);
       const returned: { id: number; text: string }[] = [];
       for (const f of run.facts) {
         if (facts.length >= MAX_FACTS) break;
@@ -301,7 +301,9 @@ export async function askAgent(
         functionResponse: {
           ...(call.id ? { id: call.id } : {}),
           name: call.name,
-          response: { facts: returned, ...(returned.length < run.facts.length ? { note: "truncated" } : {}) },
+          response: run.error
+            ? { error: run.error }
+            : { facts: returned, ...(returned.length < run.facts.length ? { note: "truncated" } : {}) },
         },
       });
     }

@@ -94,10 +94,23 @@ describe("search_locations", () => {
     expect(run.facts[0].text).toContain(`: ${within.toLocaleString()} match`);
   });
 
-  it("caps the list and ignores a nonsense area instead of trusting it", async () => {
-    const run = await runTool("search_locations", { limit: 500, area: { south: 30, north: 10, west: 70, east: 80 } }, ctx);
+  it("caps the list at 25 rows", async () => {
+    const run = await runTool("search_locations", { limit: 500 }, ctx);
     expect(run.facts.length).toBe(1 + 25);
     expect(run.facts[0].text).toContain(`: ${marks.length.toLocaleString()} matches`);
+  });
+
+  it("refuses a nonsense area instead of searching everywhere", async () => {
+    const run = await runTool("search_locations", { area: { south: 30, north: 10, west: 70, east: 80 } }, ctx);
+    expect(run.error).toContain("south < north");
+    expect(run.facts).toHaveLength(0);
+  });
+
+  it("refuses an unknown class instead of answering for all classes (observed from gpt-oss)", async () => {
+    const run = await runTool("search_locations", { class: "vegetation fire", seen_within_hours: 24 }, ctx);
+    expect(run.error).toContain('got "vegetation fire"');
+    expect(run.error).toContain("natural_fire");
+    expect(run.facts).toHaveLength(0);
   });
 });
 

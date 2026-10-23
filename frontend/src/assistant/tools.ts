@@ -31,7 +31,14 @@ export interface ToolRun {
   /** Plain words for the page: what was looked up. */
   summary: string;
   facts: ToolFact[];
+  /**
+   * Set when the request was invalid. Returned to the model so it can correct
+   * the call, instead of the search quietly answering a different question.
+   */
+  error?: string;
 }
+
+const SORTS = ["distinct_days", "peak_frp", "last_seen", "passes"];
 
 const CLASSES: ThermalClass[] = ["industrial_fire", "persistent_industrial", "natural_fire", "unknown"];
 
@@ -140,8 +147,24 @@ function areaText(a: Area): string {
     : `the box ${box}`;
 }
 
+function invalid(error: string): ToolRun {
+  return { name: "search_locations", summary: `Rejected a search: ${error}`, facts: [], error };
+}
+
 function searchLocations(args: Record<string, unknown>, ctx: AskContext): ToolRun {
   const { now } = ctx;
+  // An unknown class used to fall through to "any class", so a model asking
+  // for "vegetation fire" (observed from gpt-oss on Ollama) got a count of
+  // every location. Refuse it and say what is valid.
+  if (args.class !== undefined && args.class !== "any" && !CLASSES.includes(args.class as ThermalClass)) {
+    return invalid(`class must be one of any, ${CLASSES.join(", ")}; got "${String(args.class)}"`);
+  }
+  if (args.sort_by !== undefined && !SORTS.includes(String(args.sort_by))) {
+    return invalid(`sort_by must be one of ${SORTS.join(", ")}; got "${String(args.sort_by)}"`);
+  }
+  if (args.area !== undefined && readArea(args.area) === null) {
+    return invalid("area needs numbers south < north and west < east, within -90..90 latitude");
+  }
   const cls = CLASSES.includes(args.class as ThermalClass) ? (args.class as ThermalClass) : null;
   const minDays = num(args.min_distinct_days);
   const maxDays = num(args.max_distinct_days);
@@ -157,7 +180,7 @@ function searchLocations(args: Record<string, unknown>, ctx: AskContext): ToolRu
           km: Math.max(1, Math.min(300, num(nearRaw.radius_km) ?? 25)),
         }
       : null;
-  const sortBy = ["distinct_days", "peak_frp", "last_seen", "passes"].includes(String(args.sort_by))
+  const sortBy = SORTS.includes(String(args.sort_by))
     ? String(args.sort_by)
     : "distinct_days";
   const limit = Math.max(1, Math.min(MAX_ROWS, Math.round(num(args.limit) ?? 10)));
