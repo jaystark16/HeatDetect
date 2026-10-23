@@ -76,6 +76,11 @@ const NEAR = {
     latitude: { type: "NUMBER" },
     longitude: { type: "NUMBER" },
     radius_km: { type: "NUMBER" },
+    name: {
+      type: "STRING",
+      description:
+        "Required whenever the user named a place: the place this point approximates, e.g. 'Vizag'. Without it the answer cannot mention the place.",
+    },
   },
   required: ["latitude", "longitude"],
 };
@@ -184,6 +189,7 @@ function searchLocations(args: Record<string, unknown>, ctx: AskContext): ToolRu
           lat: num(nearRaw.latitude)!,
           lon: num(nearRaw.longitude)!,
           km: Math.max(1, Math.min(300, num(nearRaw.radius_km) ?? 25)),
+          name: typeof nearRaw.name === "string" && nearRaw.name.trim() ? nearRaw.name.trim().slice(0, 60) : undefined,
         }
       : null;
   const sortBy = SORTS.includes(String(args.sort_by))
@@ -215,7 +221,10 @@ function searchLocations(args: Record<string, unknown>, ctx: AskContext): ToolRu
     minFrp !== undefined ? `peak fire radiative power at least ${minFrp} MW` : "",
     within !== undefined ? `last seen within ${within} hours` : "",
     area ? `inside ${areaText(area)}` : "",
-    near ? `within ${near.km} km of ${coordinates(near.lat, near.lon)}` : "",
+    near
+      ? `within ${near.km} km of ${coordinates(near.lat, near.lon)}` +
+        (near.name ? `, the assistant's approximation of ${near.name} (not an official position)` : "")
+      : "",
   ]
     .filter(Boolean)
     .join(", ");

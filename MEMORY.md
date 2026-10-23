@@ -5,6 +5,23 @@ and debugging discoveries. Don't repeat what git history or the code already say
 
 ## 2026-10-23
 
+- **A correct Vizag answer was withheld for saying "Vizag".** gpt-oss searched the right
+  box (17.7° N, 83.3° E) but did not label it, and the check only accepted place names
+  found in cited fact text. Now a place the user typed may be named from an unlabelled
+  area or point search; a search the model did label must use its own label, and a
+  ranked match counts its search's description as cited. If an answer is still withheld,
+  the lookup's computed facts and locations are shown instead of a dead end.
+- **Google Maps links come from the data, never the model.** `frontend/src/maps.ts`
+  builds `google.com/maps/search/?api=1&query=lat,lon` (Google's documented Maps URLs
+  format) from each location's own coordinates at 5 decimals. Verified: the link for
+  17.60913, 83.20387 opened Google Maps at exactly that point (Nadupuru, Andhra Pradesh).
+  Google rejects "17.609° N, 83.204° E" when pasted; the page now also shows "17.60913,
+  83.20387".
+- **Two template-literal regexes in `verify.ts` never matched.** `\b` inside a
+  backtick string is a backspace character, so "a cited fact uses the same comparison
+  word" and "a cited fact states this cause" were always false. Fixed to `\\b`; all
+  sources scanned for stray control characters (none left).
+
 - **Ollama Cloud added; it answers first.** Free plan: gpt-oss:120b, gemma4:31b,
   gpt-oss:20b; other big models return 402. Ollama has no browser path (CORS preflight
   405), so it needs the proxy, and the owner chose to create the Cloudflare account.

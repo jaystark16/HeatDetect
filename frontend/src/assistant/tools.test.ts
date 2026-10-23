@@ -182,3 +182,67 @@ describe("tool plumbing", () => {
     expect(r.status).toBe(400);
   });
 });
+
+describe("naming the place the user asked about", () => {
+  // As gemini.ts numbers them: each lookup fact carries what was searched.
+  const asFacts = (run: Awaited<ReturnType<typeof runTool>>) =>
+    run.facts.map((f, i) => ({ id: i + 1, text: f.text, section: `lookup: ${run.summary}` }));
+  const vizag = {
+    class: "persistent_industrial",
+    area: { south: 17, west: 82.5, north: 18.5, east: 84.5 },
+    near: { latitude: 17.7, longitude: 83.3, radius_km: 50 },
+  };
+
+  it("accepts the user's own place name for an unlabelled area search (observed: Vizag withheld)", async () => {
+    const run = await runTool("search_locations", vizag, ctx);
+    const facts = asFacts(run);
+    const top = run.facts[1];
+    expect(top?.mark).toBeDefined();
+    const lat = top!.mark!.latitude.toFixed(3);
+    const v = verifyCited(
+      { text: `The most persistent industrial source around Vizag is at ${lat}° N. [2]`, cites: [2] },
+      facts,
+      "can you give me the coordinates where its detecting persistent industrial source in vizag",
+    );
+    expect(v.reason).toBeUndefined();
+    expect(v.ok).toBe(true);
+  });
+
+  it("still refuses a place the user never mentioned", async () => {
+    const facts = asFacts(await runTool("search_locations", vizag, ctx));
+    const v = verifyCited(
+      { text: "The sources around Chennai are listed. [1]", cites: [1] },
+      facts,
+      "persistent industrial sources in vizag",
+    );
+    expect(v.ok).toBe(false);
+  });
+
+  it("does not let a second place borrow a search the model labelled as another", async () => {
+    const run = await runTool(
+      "search_locations",
+      { ...vizag, area: { ...vizag.area, name: "Visakhapatnam" }, near: undefined },
+      ctx,
+    );
+    const facts = asFacts(run);
+    const q = "compare vizag and gujarat";
+    expect(verifyCited({ text: "The search around Gujarat found sources. [1]", cites: [1] }, facts, q).ok).toBe(false);
+    // The labelled name is allowed even from a ranked match that does not repeat it.
+    expect(verifyCited({ text: "The top source around Visakhapatnam is listed. [2]", cites: [2] }, facts, q).ok).toBe(true);
+  });
+
+  it("refuses a place name when the cited facts are not about any place", async () => {
+    const facts = asFacts(await runTool("search_locations", { class: "persistent_industrial" }, ctx));
+    const v = verifyCited({ text: "The sources around Vizag are listed. [1]", cites: [1] }, facts, "sources in vizag");
+    expect(v.ok).toBe(false);
+  });
+
+  it("carries a named point into the search fact with its disclaimer", async () => {
+    const run = await runTool(
+      "search_locations",
+      { near: { latitude: 17.7, longitude: 83.3, radius_km: 50, name: "Vizag" } },
+      ctx,
+    );
+    expect(run.facts[0].text).toContain("the assistant's approximation of Vizag (not an official position)");
+  });
+});

@@ -42,7 +42,7 @@ from memory. The pipeline appends continuously, so counts grow. Permanent rules 
 | Detection window | 2026-07-25 → 2026-10-06 (~73 days) |
 | OSM facilities / land parcels | 39,493 / 74,955 (54 cached tiles, 1.7 MB) |
 | Locations with surveyed industrial context | **16,715 of 19,889** (84%) |
-| Backend tests / frontend tests / eval scenarios | **291** / **81** / **18** |
+| Backend tests / frontend tests / eval scenarios | **291** / **90** / **18** |
 | Live site | HTTP 200, auto-rebuilt every 3 h |
 
 **Label distribution (locations):** `natural_fire` 10,140 · `unknown` 9,528 ·

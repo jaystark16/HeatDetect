@@ -192,6 +192,23 @@ export interface CitedVerdict {
 interface CitableFact {
   id: number;
   text: string;
+  /** For looked-up facts, "lookup: <what was searched>", written by code. */
+  section?: string;
+}
+
+/** A lookup scoped to a box or a point, i.e. about a place rather than everywhere. */
+const PLACE_SCOPED = /\b(?:inside the box|within \d+(?:\.\d+)? km of)\b/;
+
+/**
+ * A place the user typed may be named from a search of an area or point the
+ * model did not label. Observed: "persistent industrial sources in vizag" was
+ * searched around 17.7° N, 83.3° E with no name, and the correct answer was
+ * withheld for saying "Vizag". A lookup the model did label must use that
+ * label instead, so a second place in the question cannot borrow its box.
+ */
+function askedPlace(word: string, lookups: string[], question: string): boolean {
+  if (!new RegExp(`\\b${word}\\b`, "i").test(question)) return false;
+  return lookups.some((s) => PLACE_SCOPED.test(s) && !s.includes("approximation of"));
 }
 
 /** Hedges are how this project speaks; strong causal claims need a cited basis. */
@@ -200,7 +217,7 @@ const STRONG_CAUSAL =
 
 /** A comparison needs a cited ranking ("#1 …") or the same word in a cited fact. */
 function comparisonSupported(word: string, cited: string): boolean {
-  return /#\d+/.test(cited) || new RegExp(`\b${word}\b`, "i").test(cited);
+  return /#\d+/.test(cited) || new RegExp(`\\b${word}\\b`, "i").test(cited);
 }
 
 export function verifyCited(
@@ -214,12 +231,14 @@ export function verifyCited(
   if (text.length > 600) return fail("it ran too long");
   if (LIST_LINE.test(text)) return fail("it was formatted as a list");
 
-  const byId = new Map(facts.map((f) => [f.id, f.text]));
+  const byId = new Map(facts.map((f) => [f.id, f]));
   const cites = [...new Set((sentence.cites ?? []).filter((c) => Number.isInteger(c)))];
   if (cites.length === 0) return fail("it cited no fact");
   const unknown = cites.filter((c) => !byId.has(c));
   if (unknown.length) return fail(`it cited facts that do not exist (${unknown.join(", ")})`);
-  const cited = cites.map((c) => byId.get(c)!).join(" ");
+  const citedFacts = cites.map((c) => byId.get(c)!);
+  const cited = citedFacts.map((f) => f.text).join(" ");
+  const lookups = citedFacts.map((f) => f.section ?? "").filter((s) => s.startsWith("lookup:"));
 
   const certainty = text.match(CERTAINTY);
   if (certainty) return fail(`it claimed certainty ("${certainty[0]}") the data cannot support`);
@@ -246,11 +265,19 @@ export function verifyCited(
   }
 
   const causal = [...new Set((text.match(STRONG_CAUSAL) ?? []).map((w) => w.toLowerCase()))].filter(
-    (w) => !new RegExp(`\b${w}\b`, "i").test(cited),
+    (w) => !new RegExp(`\\b${w}\\b`, "i").test(cited),
   );
   if (causal.length) return fail(`it asserted a cause (${causal.join(", ")}) its cited facts do not state`);
 
-  const names = midSentenceProperNouns(text).filter((w) => !ALWAYS_ALLOWED.has(w) && !cited.includes(w));
+  // A lookup's description counts as cited: a ranked match ("#1 … 17.609° N")
+  // does not repeat the place its search was about.
+  const names = midSentenceProperNouns(text).filter(
+    (w) =>
+      !ALWAYS_ALLOWED.has(w) &&
+      !cited.includes(w) &&
+      !lookups.some((s) => s.includes(w)) &&
+      !askedPlace(w, lookups, question),
+  );
   if (names.length) return fail(`it named something its cited facts do not (${[...new Set(names)].join(", ")})`);
 
   return { sentence: { text, cites }, ok: true };

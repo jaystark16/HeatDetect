@@ -1,4 +1,6 @@
+import { plainCoordinates } from "../maps";
 import type { EvidenceKind, HotspotDetail } from "../types";
+import MapsLink from "./MapsLink";
 
 interface Props {
   detail: HotspotDetail | null;
@@ -94,7 +96,10 @@ export default function DetailPanel({
         <h2 className="detail__label">{cls.display_label}</h2>
       </div>
       <p className="detail__coords">
-        {detail.latitude.toFixed(4)}° N, {detail.longitude.toFixed(4)}° E
+        <span className="turn__coords" title="Paste into any map search">
+          {plainCoordinates(detail.latitude, detail.longitude)}
+        </span>{" "}
+        <MapsLink latitude={detail.latitude} longitude={detail.longitude} />
       </p>
 
       {/* Where the verdict came from, and — for rules — that a probability

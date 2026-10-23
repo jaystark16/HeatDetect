@@ -17,7 +17,10 @@ import {
 } from "../assistant/intents";
 import * as llm from "../assistant/llm";
 import { verifyWording, type CitedVerdict } from "../assistant/verify";
+import { CLASS_STYLES } from "../classes";
+import { plainCoordinates } from "../maps";
 import type { MapMark } from "../types";
+import MapsLink from "./MapsLink";
 
 interface Props {
   /** Null until every location has loaded. */
@@ -395,9 +398,13 @@ function Citations({
             <span key={f.id} className="cite__fact">
               <b>[{f.id}]</b> {f.text}
               {f.mark && (
-                <button type="button" className="turn__show" onClick={() => onShow(f.mark!)}>
-                  Show
-                </button>
+                <>
+                  {" "}
+                  <button type="button" className="turn__show" onClick={() => onShow(f.mark!)}>
+                    Show
+                  </button>{" "}
+                  <MapsLink latitude={f.mark.latitude} longitude={f.mark.longitude} />
+                </>
               )}
             </span>
           ))}
@@ -429,6 +436,47 @@ function Sentences({
   );
 }
 
+/**
+ * The locations an answer rests on, with links built from the data's own
+ * coordinates. Nothing here comes from the model's text.
+ */
+function Locations({
+  title,
+  facts,
+  onShow,
+}: {
+  title: string;
+  facts: Fact[];
+  onShow: (mark: MapMark) => void;
+}) {
+  const marks = [...new Map(facts.filter((f) => f.mark).map((f) => [f.mark!.id, f.mark!])).values()].slice(0, 25);
+  if (marks.length === 0) return null;
+  return (
+    <>
+      <h4 className="turn__heading">{title}</h4>
+      <ol className="turn__items">
+        {marks.map((m) => (
+          <li key={m.id}>
+            <span className={`dot dot--${m.label}`} aria-hidden="true" />
+            <span className="turn__line">
+              <span className="turn__coords">{plainCoordinates(m.latitude, m.longitude)}</span>
+              {" · "}
+              {CLASS_STYLES[m.label].shortLabel} · {m.distinct_days} {m.distinct_days === 1 ? "day" : "days"} ·
+              peak {m.frp_mw.toFixed(1)} MW
+            </span>
+            <span className="turn__actions">
+              <button type="button" className="turn__show" onClick={() => onShow(m)}>
+                Show
+              </button>
+              <MapsLink latitude={m.latitude} longitude={m.longitude} />
+            </span>
+          </li>
+        ))}
+      </ol>
+    </>
+  );
+}
+
 function GeminiTurnView({
   turn,
   onShow,
@@ -445,6 +493,11 @@ function GeminiTurnView({
   const answerShown = result.answer.some((v) => v.ok);
   const withheld = [...result.answer, ...result.analysis, ...result.caveats].filter((v) => !v.ok);
   const fellBack = result.tried.length > 0;
+  const shown = [...result.answer, ...result.analysis, ...result.caveats].filter((v) => v.ok);
+  const citedFacts = facts.filter((f) => shown.some((v) => v.sentence.cites.includes(f.id)));
+  // When the wording is withheld, what the lookups found is still computed
+  // fact, shown as code wrote it rather than leaving a dead end.
+  const lookedUp = facts.filter((f) => f.section.startsWith("lookup:"));
 
   return (
     <div className="turn">
@@ -470,10 +523,20 @@ function GeminiTurnView({
           // No substitute answer: a computed answer to a keyword reading of the
           // question can be about something else entirely ("refinery fire in
           // Gujarat" read as "most persistent industrial sources").
-          <p className="turn__fallback">
-            The data can't establish that
-            {result.answer[0]?.reason ? ` (answer withheld: ${result.answer[0].reason})` : ""}.
-          </p>
+          <>
+            <p className="turn__fallback">
+              {lookedUp.length > 0 ? "The model's wording was withheld" : "The data can't establish that"}
+              {result.answer[0]?.reason ? ` (${result.answer[0].reason})` : ""}.
+              {lookedUp.length > 0 && " Here is what its lookup found, as computed from the data:"}
+            </p>
+            {lookedUp.length > 0 && (
+              <ul className="turn__found">
+                {lookedUp.filter((f) => !f.mark).slice(0, 6).map((f) => (
+                  <li key={f.id}>{f.text}</li>
+                ))}
+              </ul>
+            )}
+          </>
         )}
 
         {result.analysis.some((v) => v.ok) && (
@@ -489,6 +552,12 @@ function GeminiTurnView({
             <Sentences verdicts={result.caveats} facts={facts} onShow={onShow} />
           </>
         )}
+
+        <Locations
+          title={answerShown ? "Locations in this answer" : "Locations found"}
+          facts={answerShown ? citedFacts : lookedUp}
+          onShow={onShow}
+        />
 
         {!deep && answerShown && (
           <p className="turn__offer">
@@ -580,9 +649,12 @@ function LocalTurnView({ turn, onShow }: { turn: LocalTurn; onShow: (mark: MapMa
               <li key={item.mark.id}>
                 <span className={`dot dot--${item.mark.label}`} aria-hidden="true" />
                 <span className="turn__line">{item.line}</span>
-                <button type="button" className="turn__show" onClick={() => onShow(item.mark)}>
-                  Show
-                </button>
+                <span className="turn__actions">
+                  <button type="button" className="turn__show" onClick={() => onShow(item.mark)}>
+                    Show
+                  </button>
+                  <MapsLink latitude={item.mark.latitude} longitude={item.mark.longitude} />
+                </span>
               </li>
             ))}
           </ol>
