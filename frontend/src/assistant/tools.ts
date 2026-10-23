@@ -26,6 +26,20 @@ const DETAIL_RADIUS_KM = 3;
 export interface ToolFact {
   text: string;
   mark?: MapMark;
+  /**
+   * On a search's total: every place it found, in its ranked order. The model
+   * sees only the top few as facts; the page can list and download them all.
+   */
+  matches?: MapMark[];
+  /** On a search's total: how `matches` is ordered, e.g. "by distinct days seen". */
+  ranking?: string;
+  /**
+   * On a search's total: the user asked for the places themselves, so the page
+   * lists all of them whenever the answer cites anything from this search.
+   * Observed: "give me locations of all these spots" listed two of 1,602
+   * because the answer cited two ranked matches, not the total.
+   */
+  listAll?: boolean;
 }
 
 export interface ToolRun {
@@ -163,6 +177,11 @@ export const TOOL_DECLARATIONS = [
         near: NEAR,
         sort_by: { type: "STRING", enum: ["distinct_days", "peak_frp", "last_seen", "passes"] },
         limit: { type: "INTEGER", description: "How many top matches to list, 1 to 25" },
+        list_all: {
+          type: "BOOLEAN",
+          description:
+            "True when the user wants the places themselves (locations, coordinates, a list, which ones, all of them). The page then lists every match under the answer, with map links and a CSV download.",
+        },
       },
     },
   },
@@ -353,6 +372,9 @@ function searchLocations(args: Record<string, unknown>, ctx: AskContext): ToolRu
     ? [...rows].sort((a, b) => a.km - b.km)
     : [...rows].sort((a, b) => key[sortBy](b) - key[sortBy](a));
   const rankLabel = near && args.sort_by === undefined ? "nearest" : label[sortBy];
+  facts[0].matches = ranked.map((r) => r.m);
+  facts[0].ranking = rankLabel;
+  facts[0].listAll = args.list_all === true;
   ranked.slice(0, limit).forEach((r, i) =>
     facts.push({
       text: `#${i + 1} ${rankLabel} among those matches: ${describe(r.m, now, near ? `; ${r.km.toFixed(1)} km away` : "")}`,

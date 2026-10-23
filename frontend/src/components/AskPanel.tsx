@@ -17,8 +17,10 @@ import {
 } from "../assistant/intents";
 import * as llm from "../assistant/llm";
 import { answerLocations } from "../assistant/locations";
+import { smallTalk } from "../assistant/smalltalk";
 import { verifyWording, type CitedVerdict } from "../assistant/verify";
 import { CLASS_STYLES } from "../classes";
+import { downloadCsv } from "../csv";
 import { placeLabel, plainCoordinates } from "../maps";
 import type { MapMark } from "../types";
 import MapsLink from "./MapsLink";
@@ -59,20 +61,43 @@ interface LocalTurn {
   seconds: number;
 }
 
-type Turn = GeminiTurn | LocalTurn;
+/** Small talk answered by the page itself (smalltalk.ts). */
+interface TalkTurn {
+  kind: "talk";
+  id: number;
+  question: string;
+  reply: string;
+}
+
+type Turn = GeminiTurn | LocalTurn | TalkTurn;
 
 /** The conversation as the user saw it, so follow-ups make sense to the model. */
+/**
+ * What the page listed under an answer, so "these spots" can mean all of them.
+ * Observed: after "1,602 places showed heat", "give me locations of all these
+ * spots" got only the two the answer had named.
+ */
+function listedUnder(t: GeminiTurn): string | undefined {
+  const shown = [...t.result.answer, ...t.result.analysis, ...t.result.caveats].filter((v) => v.ok);
+  const list = answerLocations(t.facts, shown.flatMap((v) => v.sentence.cites));
+  if (!list.marks.length) return undefined;
+  return list.heading ?? `${list.marks.length.toLocaleString()} ${list.marks.length === 1 ? "place" : "places"}`;
+}
+
 function toHistory(turns: Turn[]): Exchange[] {
   return turns.map((t) => ({
     question: t.question,
     answer:
-      t.kind === "gemini"
-        ? [...t.result.answer, ...t.result.analysis]
-            .filter((v) => v.ok)
-            .map((v) => v.sentence.text)
-            .join(" ") || "(no answer shown)"
-        : (t.wording ?? t.answer.summary),
+      t.kind === "talk"
+        ? t.reply
+        : t.kind === "gemini"
+          ? [...t.result.answer, ...t.result.analysis]
+              .filter((v) => v.ok)
+              .map((v) => v.sentence.text)
+              .join(" ") || "(no answer shown)"
+          : (t.wording ?? t.answer.summary),
     calls: t.kind === "gemini" ? t.result.calls : undefined,
+    listed: t.kind === "gemini" ? listedUnder(t) : undefined,
   }));
 }
 
@@ -195,6 +220,13 @@ export default function AskPanel({ context, onShow }: Props) {
         depth = "deep";
       }
 
+      const reply = depth === "brief" ? smallTalk(q) : null;
+      if (reply) {
+        setDraft("");
+        setTurns((t) => [...t, { kind: "talk", id: nextId.current++, question: q, reply }]);
+        return;
+      }
+
       setBusy(true);
       setDraft("");
 
@@ -267,7 +299,14 @@ export default function AskPanel({ context, onShow }: Props) {
         )}
 
         {turns.map((turn) =>
-          turn.kind === "gemini" ? (
+          turn.kind === "talk" ? (
+            <div className="turn" key={turn.id}>
+              <p className="turn__question">{turn.question}</p>
+              <div className="turn__answer">
+                <p className="turn__text">{turn.reply}</p>
+              </div>
+            </div>
+          ) : turn.kind === "gemini" ? (
             <GeminiTurnView key={turn.id} turn={turn} onShow={onShow} onAsk={ask} busy={busy} />
           ) : (
             <LocalTurnView key={turn.id} turn={turn} onShow={onShow} />
@@ -431,7 +470,11 @@ function Sentences({
       {passed.map((v, i) => (
         <span key={i} className="sentence">
           {v.sentence.text}{" "}
-          <Citations cites={v.sentence.cites} facts={facts} onShow={onShow} />{" "}
+          {v.sentence.cites.length > 0 && (
+            <>
+              <Citations cites={v.sentence.cites} facts={facts} onShow={onShow} />{" "}
+            </>
+          )}
         </span>
       ))}
     </p>
@@ -442,6 +485,8 @@ function Sentences({
  * The locations an answer rests on, with links built from the data's own
  * coordinates. Nothing here comes from the model's text.
  */
+const PAGE = 25;
+
 function Locations({
   title,
   marks,
@@ -451,12 +496,30 @@ function Locations({
   marks: MapMark[];
   onShow: (mark: MapMark) => void;
 }) {
+  const [visible, setVisible] = useState(PAGE);
   if (marks.length === 0) return null;
+  const shown = marks.slice(0, visible);
   return (
     <>
       <h4 className="turn__heading">{title}</h4>
+      <p className="turn__list-tools">
+        {marks.length > PAGE && (
+          <span className="turn__meta">
+            Showing {shown.length.toLocaleString()} of {marks.length.toLocaleString()}
+          </span>
+        )}
+        <button
+          type="button"
+          className="turn__show"
+          onClick={() =>
+            downloadCsv(marks, `heatdetect-locations-${new Date().toISOString().slice(0, 10)}.csv`)
+          }
+        >
+          Download CSV ({marks.length.toLocaleString()})
+        </button>
+      </p>
       <ol className="turn__items">
-        {marks.map((m) => (
+        {shown.map((m) => (
           <li key={m.id}>
             <span className={`dot dot--${m.label}`} aria-hidden="true" />
             <span className="turn__line">
@@ -475,6 +538,11 @@ function Locations({
           </li>
         ))}
       </ol>
+      {marks.length > visible && (
+        <button type="button" className="turn__show turn__more" onClick={() => setVisible((v) => v + PAGE)}>
+          Show {Math.min(PAGE, marks.length - visible)} more
+        </button>
+      )}
     </>
   );
 }

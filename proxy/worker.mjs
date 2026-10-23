@@ -45,17 +45,20 @@ const OLLAMA = "https://ollama.com/api/chat";
 /**
  * Ollama Cloud models usable on the free plan, best first. Ranked 2026-10-23
  * by running HeatDetect's own Ask pipeline (tools, cited answer, citation
- * check) on up to 19 questions over the live data, every shown answer
- * recounted by hand (docs/findings/2026-10-23-ollama-model-comparison.md):
- *   nemotron-3-super  18/19 answered, median 13 s; most natural and complete
- *   gemma4:31b        18/19 answered, median 4 s; no error found, terser
- *   beam              12/14 answered, median 17 s; richest, one ranking misordered
+ * check) over the live data, every shown answer recounted by hand
+ * (docs/findings/2026-10-23-ollama-model-comparison.md):
+ *   gemma4:31b        followed a real conversation ("all these spots", "which
+ *                     of those are in odisha") in 4 of 4 runs; 18/19 single
+ *                     questions answered, median 4 s, no error found
+ *   nemotron-3-super  the same conversation right in about half its runs;
+ *                     18/19 answered, median 13 s, richer wording
+ *   beam              12/14 answered, median 17 s; one ranking misordered
  *   gpt-oss:120b      answered one question without looking it up
  * Not used: nemotron-3-ultra (median 51 s), nemotron-3-nano:30b and
  * gpt-oss:20b (less accurate). None enforced a JSON schema, so the dashboard
  * checks the shape of every reply itself.
  */
-export const OLLAMA_MODELS = ["nemotron-3-super", "gemma4:31b", "beam", "gpt-oss:120b"];
+export const OLLAMA_MODELS = ["gemma4:31b", "nemotron-3-super", "beam", "gpt-oss:120b"];
 
 const DEFAULT_ORIGINS = "https://jaystark16.github.io";
 const MAX_BODY_BYTES = 256 * 1024;

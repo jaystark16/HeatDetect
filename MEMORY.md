@@ -5,6 +5,21 @@ and debugging discoveries. Don't repeat what git history or the code already say
 
 ## 2026-10-23
 
+- **The Ask tab could not hold a conversation.** "hello" got statistics; "give me locations
+  of all these spots" got the two spots last named instead of all 1,602. Causes, all ours:
+  every sentence had to cite a fact; the history held what was said, not what was listed;
+  lists stopped at 25. Now: the page answers pure small talk itself; a sentence with no
+  number, name, source type or amount needs no citation; history carries what was listed;
+  a list request (`list_all`) lists every match with paging and a CSV download; a
+  follow-up may restate earlier answers. The citation check itself was not loosened for
+  claims: "Most of the heat is vegetation fires" uncited is still withheld.
+- **gemma4:31b now answers first.** On the owner's own conversation it was right in 4 of 4
+  runs; nemotron-3-super in about half. Single-question scores had put nemotron first.
+- **The owner asked to "remove all restrictions" or "train it".** Neither was done: the
+  checks are what stop invented numbers, and the free plan offers no fine-tuning, which
+  would not have fixed a design problem anyway. A stronger hosted model (paid) is the
+  remaining lever for "understands like a person".
+
 - **Ollama model order chosen by measurement, not by size.** The owner asked for the best
   free model. All seven were run through the real Ask pipeline on up to 19 questions,
   every answer recounted by hand: nemotron-3-super first (most natural and complete),

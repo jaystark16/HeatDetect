@@ -18,6 +18,10 @@ export interface Fact {
   text: string;
   /** Set when the fact is about one location, so the page can show it on the map. */
   mark?: MapMark;
+  /** On a search's total: every place it found, ranked (see tools.ts). */
+  matches?: MapMark[];
+  ranking?: string;
+  listAll?: boolean;
 }
 
 export interface Briefing {
@@ -102,6 +106,17 @@ export function buildBriefing(question: string, ctx: AskContext): Briefing {
     );
   }
   if (prov?.coverage_note) add("data", `Coverage: ${prov.coverage_note}`);
+
+  // What the assistant can do, written here so "what can you do?" has a fact
+  // to cite (observed 2026-10-23: the description was withheld as an uncited claim).
+  add(
+    "assistant",
+    "What this assistant can do: search every location by Indian state or union territory or by country (real boundaries, " +
+      "India's official map), around a city or a point, by class (possible industrial fire, persistent industrial source, " +
+      "probable vegetation fire, unclassified), by days seen, by peak fire radiative power and by how recently it was seen; " +
+      "open the full evidence for one location; list every place a search finds, with coordinates, Google Maps links and a " +
+      "CSV download; and explain how places are classified and how far the classifier can be trusted.",
+  );
 
   // --- How classification works and how far to trust it.
   add(

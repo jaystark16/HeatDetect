@@ -100,23 +100,37 @@ up in all of the data:
   the breakdown by class and the top matches.
 - location_detail: the full evidence for the location nearest a point.
 
+First work out what the user means, the way a thoughtful person would. People type fast:
+"tell what happend in 24 hrs", "locations of all these spots mentioned in now". Read past
+typos and shorthand. Follow-ups lean on the conversation: "these spots", "them", "those",
+"all of them" usually mean everything the previous answer counted (for example every place
+seen in the last 24 hours), not only the one or two it happened to name, so repeat that
+search's filters exactly. Small talk (hello, thanks, how are you, who are you, what can
+you do) needs no lookup: reply DONE straight away.
+
 Call tools whenever the question needs anything the briefing does not already state:
 a region, a class or time filter, a threshold, a specific location, a comparison. You
 may call several, and search again with different filters. If the user names an Indian
 state or union territory, or a country, search with region: it uses the real boundary.
 Do not add an area box to a region search unless the user asked for part of it; a box
-can cut off the region's edges.
-For any other place, such as a city, pass your best approximate box or point with its
-name; it will be reported as an approximation. Interpret follow-ups ("what about last week?", "give me those locations")
-using the conversation, repeating the earlier search's filters. When the user asks for
-locations, coordinates, a list or "which ones", search with a limit of 25 and the sort
-that fits the question. For "now", "right now", "currently" or "today", search the last 24
-hours: the satellites pass over a given spot only a few times a day, so a shorter window
-usually finds nothing even where there is heat. Do not write the answer here. When you have what you need,
-reply with the word DONE.`;
+can cut off the region's edges. For any other place, such as a city, pass your best
+approximate box or point with its name; it will be reported as an approximation. When the
+user asks for locations, coordinates, a list, "which ones" or "all of them", search with
+list_all true, a limit of 25 and the sort that fits the question; the page then lists every
+match, not only those 25. For "now", "right now", "currently" or "today", search the last 24 hours: the
+satellites pass over a given spot only a few times a day, so a shorter window usually finds
+nothing even where there is heat. Do not write the answer here. When you have what you
+need, reply with the word DONE.`;
 
 const RULES = `Rules for every sentence:
-- Cite the fact numbers it rests on in "cites". Every sentence needs at least one.
+- Cite the fact numbers it rests on in "cites". Every sentence that says anything about the
+  data needs at least one.
+- A sentence that says nothing about the data, such as a greeting, thanks, an offer to help
+  or a question back to the user, has "cites": [] and must hold no number, no place, no
+  kind of heat source and no amount ("most", "many"). Never recite statistics nobody asked
+  for: "hello" gets "Hi! What would you like to know?", not a count of detections.
+- Asked what you can do, say it from the fact that lists what this assistant can do, and
+  cite it.
 - Use only numbers that appear in the facts you cite. You may round them. Do not
   calculate new numbers.
 - Name a place, facility or source type only if a cited fact names it. A state, union
@@ -133,11 +147,11 @@ const RULES = `Rules for every sentence:
   12 of them unclassified, described as "27 consistent with industrial activity".)
 - When a location's evidence was looked up, lead with how that location is classified.
 - When the user asks for locations or a list, cite the search fact ("Search of all …")
-  together with its ranked matches. The page lists every match that search returned,
-  with coordinates and map links, under your answer; say how many there are and how they
-  are ranked, and name only the top one or two in the sentence.
-- If the facts cannot answer the question, say so in one sentence and say what they
-  can show.`;
+  together with its ranked matches. The page lists every place that search found, with
+  coordinates, map links and a CSV download, under your answer. Say how many there are
+  and that they are listed below, and name only the top one or two in the sentence.
+- If a data question cannot be answered from the facts, say so plainly in one sentence and
+  offer what you can look up instead.`;
 
 // Measured 2026-10-23: with only "be natural", every model wrote report prose
 // ("There are 3 matches around Vizag, all of which are classified as…").
@@ -160,7 +174,9 @@ const SYSTEMS: Record<Depth, string> = {
   // and given only if asked for.
   brief: `${ROLE}
 
-Answer the user's question from the numbered facts, in one to three short sentences.
+Reply to what the user actually meant, as a person would in chat. Answer data questions
+from the numbered facts, usually in one to three short sentences; answer small talk in
+one friendly sentence and offer to help.
 
 ${VOICE}
 
@@ -186,6 +202,8 @@ export interface Exchange {
   answer: string;
   /** The tool calls behind that answer, exactly as made. */
   calls?: ToolCall[];
+  /** What the page listed under the answer, e.g. "All 1,602, ranked by …". */
+  listed?: string;
 }
 
 export interface GeminiAnswer {
@@ -463,7 +481,8 @@ function historyText(history: Exchange[]): string {
           (h.calls?.length
             ? `Assistant looked up: ${h.calls.map((c) => `${c.name} ${JSON.stringify(c.args)}`).join("; ")}\n`
             : "") +
-          `Assistant: ${h.answer}`,
+          `Assistant: ${h.answer}` +
+          (h.listed ? `\n(Listed under that answer: ${h.listed}.)` : ""),
       )
       .join("\n\n") +
     "\n\n"
@@ -553,7 +572,15 @@ async function askWith(
       const returned: { id: number; text: string }[] = [];
       for (const f of run.facts) {
         if (facts.length >= MAX_FACTS) break;
-        facts.push({ id: facts.length + 1, section: `lookup: ${run.summary}`, text: f.text, mark: f.mark });
+        facts.push({
+          id: facts.length + 1,
+          section: `lookup: ${run.summary}`,
+          text: f.text,
+          mark: f.mark,
+          matches: f.matches,
+          ranking: f.ranking,
+          listAll: f.listAll,
+        });
         returned.push({ id: facts.length, text: f.text });
       }
       items.push({
@@ -585,8 +612,15 @@ async function askWith(
     }
   }
 
+  // A follow-up may restate what earlier answers said ("of the 1,602 spots,
+  // 92 are in Odisha"): those sentences passed this same check when shown, so
+  // their numbers and names count as stated. Observed withheld otherwise.
+  const said = history
+    .slice(-HISTORY_TURNS)
+    .map((h) => h.answer)
+    .join(" ");
   const check = (items: CitedSentence[] | undefined) =>
-    (items ?? []).map((s) => verifyCited(s, facts, question));
+    (items ?? []).map((s) => verifyCited(s, facts, question, said));
   const answer = check(raw.answer);
   const analysis = check(raw.analysis);
   const caveats = check(raw.caveats);

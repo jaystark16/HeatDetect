@@ -249,25 +249,41 @@ describe("naming the place the user asked about", () => {
 });
 
 describe("locations listed under an answer", () => {
+  // As gemini.ts numbers them, carrying each search's full ranked matches.
   const numbered = (runs: Awaited<ReturnType<typeof runTool>>[]) => {
     let id = 0;
     return runs.flatMap((run) =>
-      run.facts.map((f) => ({ id: ++id, section: `lookup: ${run.summary}`, text: f.text, mark: f.mark })),
+      run.facts.map((f) => ({
+        id: ++id,
+        section: `lookup: ${run.summary}`,
+        text: f.text,
+        mark: f.mark,
+        matches: f.matches,
+        ranking: f.ranking,
+        listAll: f.listAll,
+      })),
     );
   };
+  const last24h = () => marks.filter((m) => Date.parse(m.last_seen) >= NOW - 24 * 3_600_000);
 
-  it("lists a search's matches when the answer cites only its total (observed: count, no locations)", async () => {
+  it("lists every place a search found when the answer cites its total (observed: two of 1,602)", async () => {
     const run = await runTool("search_locations", { seen_within_hours: 24, limit: 25 }, ctx);
-    const facts = numbered([run]);
-    const list = answerLocations(facts, [1]);
-    const expected = run.facts.filter((f) => f.mark).map((f) => f.mark!.id);
-    expect(list.marks.map((m) => m.id)).toEqual(expected);
-    const total = marks.filter((m) => Date.parse(m.last_seen) >= NOW - 24 * 3_600_000).length;
-    expect(list.heading).toBe(
-      total <= 25
-        ? `All ${total.toLocaleString()}, ranked by distinct days seen`
-        : `Top 25 of ${total.toLocaleString()}, ranked by distinct days seen`,
-    );
+    const list = answerLocations(numbered([run]), [1]);
+    const expected = last24h();
+    expect(list.marks).toHaveLength(expected.length);
+    expect(new Set(list.marks.map((m) => m.id))).toEqual(new Set(expected.map((m) => m.id)));
+    expect(list.heading).toBe(`All ${expected.length.toLocaleString()}, ranked by distinct days seen`);
+    // The model was shown the top few; the page lists all of them, in the same order.
+    const shownToModel = run.facts.slice(1).map((f) => f.mark!.id);
+    expect(list.marks.slice(0, shownToModel.length).map((m) => m.id)).toEqual(shownToModel);
+  });
+
+  it("keeps the search's ranking for the whole list", async () => {
+    const run = await runTool("search_locations", { class: "persistent_industrial", sort_by: "peak_frp" }, ctx);
+    const list = answerLocations(numbered([run]), [1]);
+    const peaks = list.marks.map((m) => m.frp_mw);
+    expect(peaks).toEqual([...peaks].sort((a, b) => b - a));
+    expect(list.heading).toMatch(/, ranked by peak fire radiative power$/);
   });
 
   it("says nearest first for a point search", async () => {
@@ -282,13 +298,19 @@ describe("locations listed under an answer", () => {
     const totals = facts.filter((f) => f.text.startsWith("Search of all")).map((f) => f.id);
     const list = answerLocations(facts, totals);
     expect(list.heading).toBeNull();
-    expect(list.marks).toHaveLength(6);
+    expect(list.marks).toHaveLength(a.facts[0].matches!.length + b.facts[0].matches!.length);
+  });
+
+  it("lists the whole search when the user asked for the places, whatever the answer cites (observed: 2 of 1,602)", async () => {
+    const run = await runTool("search_locations", { seen_within_hours: 24, limit: 25, list_all: true }, ctx);
+    const list = answerLocations(numbered([run]), [2, 3]);
+    expect(list.marks).toHaveLength(last24h().length);
+    expect(list.heading).toMatch(/^All /);
   });
 
   it("lists only the cited location when the answer cites one match", async () => {
     const run = await runTool("search_locations", { class: "persistent_industrial", limit: 5 }, ctx);
-    const facts = numbered([run]);
-    const list = answerLocations(facts, [2]);
+    const list = answerLocations(numbered([run]), [2]);
     expect(list.marks.map((m) => m.id)).toEqual([run.facts[1].mark!.id]);
     expect(list.heading).toBeNull();
   });

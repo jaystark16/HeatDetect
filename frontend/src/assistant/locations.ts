@@ -1,13 +1,14 @@
 /**
  * Which locations to list under an answer.
  *
- * A sentence citing a search's total ("854 matches") is about the matches that
- * search returned, so they are listed even when no sentence cites them one by
- * one. Observed: "give me those locations" got only the count, because the
- * list showed cited locations and the answer cited the total.
+ * A sentence citing a search's total ("1,602 matches") is about every place
+ * that search found, so all of them are listed (the page pages through them
+ * and offers a CSV), even when no sentence names them one by one. Observed:
+ * "give me those locations" got only the count, then only the two places the
+ * previous answer had named.
  *
- * Everything listed comes from facts the code computed; the heading reads the
- * wording tools.ts writes, which tools.test.ts pins.
+ * Everything listed comes from what the code computed: the search's own
+ * ranked matches, carried on its total fact (tools.ts), never the model's text.
  */
 
 import type { MapMark } from "../types";
@@ -15,41 +16,32 @@ import type { Fact } from "./briefing";
 
 export interface LocationList {
   marks: MapMark[];
-  /** "Top 10 of 854, ranked by distinct days seen", when one search supplied them. */
+  /** "All 1,602, ranked by peak fire radiative power", when one search supplied them. */
   heading: string | null;
 }
 
-const MAX_LISTED = 25;
+const isSearchTotal = (f: Fact) => f.section.startsWith("lookup:") && Array.isArray(f.matches);
 
-const isSearchTotal = (f: Fact) => f.section.startsWith("lookup:") && !f.mark && /^Search of all /.test(f.text);
-
-function headingFor(total: Fact, ranked: Fact[]): string | null {
-  const count = total.text.match(/: ([\d,]+) match(?:es)?\b/)?.[1];
-  const rank = ranked[0]?.text.match(/^#\d+ (.+?) among those matches:/)?.[1];
-  if (!count || !rank) return null;
-  const order = rank === "nearest" ? "nearest first" : `ranked ${rank}`;
-  // The same search run twice shares a description; count each location once.
-  const shown = new Set(ranked.map((f) => f.mark!.id)).size;
-  return shown === Number(count.replace(/,/g, ""))
-    ? `All ${count}, ${order}`
-    : `Top ${shown} of ${count}, ${order}`;
+function headingFor(total: Fact): string | null {
+  if (!total.matches || !total.ranking) return null;
+  const order = total.ranking === "nearest" ? "nearest first" : `ranked ${total.ranking}`;
+  return `All ${total.matches.length.toLocaleString()}, ${order}`;
 }
 
 export function answerLocations(facts: Fact[], citedIds: number[]): LocationList {
   const cited = facts.filter((f) => citedIds.includes(f.id));
-  const totals = cited.filter(isSearchTotal);
-  const listed = [
-    ...cited.filter((f) => f.mark),
-    ...totals.flatMap((t) => facts.filter((g) => g.section === t.section && g.mark)),
-  ];
-  const marks = [...new Map(listed.map((f) => [f.mark!.id, f.mark!])).values()].slice(0, MAX_LISTED);
+  // A search is listed whole when its total is cited, or when the user asked
+  // for the places (listAll) and the answer cites any of its matches.
+  const sections = new Set(cited.map((f) => f.section));
+  const totals = facts.filter(
+    (f) => isSearchTotal(f) && (citedIds.includes(f.id) || (f.listAll === true && sections.has(f.section))),
+  );
+  const listed = [...cited.filter((f) => f.mark).map((f) => f.mark!), ...totals.flatMap((t) => t.matches!)];
+  const marks = [...new Map(listed.map((m) => [m.id, m])).values()];
 
   // A heading describes one search, so it is shown only when everything listed
   // came from exactly one.
   const only = totals.length === 1 ? totals[0] : null;
-  const heading =
-    only && cited.every((f) => !f.mark || f.section === only.section)
-      ? headingFor(only, facts.filter((g) => g.section === only.section && g.mark))
-      : null;
-  return { marks, heading };
+  const fromOnly = only && cited.every((f) => !f.mark || only.matches!.some((m) => m.id === f.mark!.id));
+  return { marks, heading: only && fromOnly ? headingFor(only) : null };
 }

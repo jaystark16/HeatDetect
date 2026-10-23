@@ -4,8 +4,10 @@
 gemma4:31b, gpt-oss:120b, gpt-oss:20b, nemotron-3-nano:30b, nemotron-3-super,
 nemotron-3-ultra. Best meant natural, human answers that are still accurate.
 
-**Result.** Order in `proxy/worker.mjs` (`OLLAMA_MODELS`): **nemotron-3-super**,
-gemma4:31b, beam, gpt-oss:120b. The others are not used.
+**Result.** Order in `proxy/worker.mjs` (`OLLAMA_MODELS`): **gemma4:31b**,
+nemotron-3-super, beam, gpt-oss:120b. The others are not used. nemotron-3-super led
+the single-question rounds below, but gemma4:31b followed a real conversation far more
+reliably (see "Conversation", added the same day), which is what the owner asked for.
 
 ## Method
 
@@ -54,6 +56,31 @@ rules, not real-world correctness."
   - A negated certainty word ("nothing confirms an accident") is a hedge, not a claim.
 - **Search results state the industrial total** ("97 of them possible or persistent
   industrial"), so a comparison between two states does not need the model to add.
+
+## Conversation (added 2026-10-23, after the owner's report)
+
+The owner's real exchange on the live site: "hello" (answered with statistics),
+"tell what happend in 24 hrs", then "can you give me locations of all these spots
+mentioned in now" (answered with only the two spots the previous answer had named).
+Fixes, then the same six-turn script ("hello", "tell what happend in 24 hrs", that
+request, "thanks!", "what else can you do?", "ok which of those are in odisha") run
+repeatedly, history built as the page builds it:
+
+- Greetings, thanks and goodbyes are answered by the page itself (`smalltalk.ts`).
+- A sentence that states nothing about the data needs no citation (`notTalk` in
+  `verify.ts`); one with a number, name, source type or amount still does.
+- The history carries what the page listed under each answer; a search the user asked
+  to see (`list_all`) is listed whole, with paging and a CSV download.
+- A follow-up may restate numbers, names and comparisons from earlier answers, which
+  passed the same check when shown; what the user typed does not count as a source.
+
+| Model | "all these spots" → all 1,602 listed | "which of those are in odisha" → 92 |
+|---|---|---|
+| gemma4:31b | 4 of 4 runs | 4 of 4 runs |
+| nemotron-3-super | 3 of 6 | 3 of 6 (it took "these" as the 1–4 spots last named, or a sentence was withheld) |
+
+All counts recounted from the snapshot: 1,602 places in the last 24 hours (13 / 258 /
+358 / 973), 92 of them in Odisha (9 / 62 / 3 / 18).
 
 ## Limits
 

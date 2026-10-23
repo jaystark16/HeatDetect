@@ -109,11 +109,31 @@ describe("checking a cited sentence", () => {
     expect(v.reason).toContain(days);
   });
 
-  it("rejects a sentence with no citation, or citing a fact that does not exist", () => {
-    expect(verifyCited({ text: "Heat is concentrated.", cites: [] }, briefing.facts, "q").reason).toBe(
-      "it cited no fact",
-    );
+  it("rejects a claim with no citation, or citing a fact that does not exist", () => {
+    expect(verifyCited({ text: "Heat is concentrated.", cites: [] }, briefing.facts, "q").ok).toBe(false);
     expect(verifyCited({ text: "Heat is concentrated.", cites: [9999] }, briefing.facts, "q").ok).toBe(false);
+  });
+
+  it("lets plain conversation through without a citation, and nothing else (observed: a greeting answered with statistics)", () => {
+    const talk = (text: string) => verifyCited({ text, cites: [] }, briefing.facts, "hello");
+    expect(talk("Hi! What would you like to know?").ok).toBe(true);
+    expect(talk("Happy to help.").ok).toBe(true);
+    expect(talk("I can look up any state, city or point for you, or open the evidence for one spot.").ok).toBe(true);
+    expect(talk("You're welcome, ask me anything else whenever you like.").ok).toBe(true);
+    expect(talk("Want me to list the possible industrial fires as well?").ok).toBe(true);
+    expect(talk("I can also filter by class, days seen or how recently a spot was seen.").ok).toBe(true);
+    expect(talk("Hi! I'm here to help you explore heat detections and fires.").ok).toBe(true);
+    expect(talk("Fires are burning near the coast, and I can list them.").ok).toBe(false);
+    expect(talk("Would you like to see where most fires are?").ok).toBe(false); // an amount is a claim
+    // Anything that says something about the data still needs a cited fact.
+    expect(talk("There were 1,602 spots.").ok).toBe(false);
+    expect(talk("Seventy spots showed heat.").ok).toBe(false);
+    expect(talk("Most of the heat comes from vegetation fires.").ok).toBe(false);
+    expect(talk("Odisha looks busy today.").ok).toBe(false);
+    expect(talk("Things look quiet around Vizag.").ok).toBe(false);
+    expect(talk("Nothing is burning right now.").ok).toBe(false);
+    expect(talk("It is definitely calm.").ok).toBe(false);
+    expect(talk("A steel plant there runs hot.").ok).toBe(false);
   });
 
   it("rejects arithmetic the facts do not state (observed: 19,889 - 16,715 = 3,174)", () => {
@@ -192,6 +212,27 @@ describe("checking a cited sentence", () => {
     expect(check("It is right about 93% of the time on vegetation fires.").ok).toBe(true);
     expect(check("Its recall there is 97.1 percent.").ok).toBe(true);
     expect(check("It is right 95% of the time.").ok).toBe(false);
+  });
+
+  it("drops citation markers the model wrote into the text (observed: 'cites: [4]' shown)", () => {
+    const v = verifyCited({ text: "I can also open the full evidence for a location cites: [4].", cites: [] }, briefing.facts, "what can you do?");
+    expect(v.ok).toBe(true);
+    expect(v.sentence.text).toBe("I can also open the full evidence for a location.");
+    const totals = fact(/detections at .* locations\.$/);
+    const cells = snapshot.analytics.total_cells.toLocaleString();
+    const w = verifyCited({ text: `There are ${cells} locations [${totals.id}].`, cites: [totals.id] }, briefing.facts, "q");
+    expect(w.ok).toBe(true);
+    expect(w.sentence.text).toBe(`There are ${cells} locations.`);
+  });
+
+  it("lets a follow-up restate what earlier answers already said (observed: 'of the 1,602 spots' withheld)", () => {
+    const facts = [{ id: 1, text: "Search of all 32,926 locations, in Odisha: 92 matches." }];
+    const earlier = "In the last 24 hours, 1,602 spots showed heat, the strongest in China.";
+    const check = (text: string) => verifyCited({ text, cites: [1] }, facts, "which of those are in odisha", earlier);
+    expect(check("Of the 1,602 spots, 92 are in Odisha.").ok).toBe(true);
+    expect(check("None of them is the strongest one, which was in China.").ok).toBe(true);
+    expect(check("Of the 1,700 spots, 92 are in Odisha.").ok).toBe(false);
+    expect(check("Most are near Kolkata.").ok).toBe(false);
   });
 
   it("lets a negated certainty word through as the hedge it is (observed: withheld for 'confirms')", () => {

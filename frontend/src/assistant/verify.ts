@@ -46,7 +46,7 @@ function claimedCertainty(text: string): string | null {
 }
 
 /** Proper nouns the model may use without them appearing in the facts. */
-const ALWAYS_ALLOWED = new Set(["NASA", "FIRMS", "India", "OpenStreetMap", "VIIRS", "MODIS", "MW", "km"]);
+const ALWAYS_ALLOWED = new Set(["NASA", "FIRMS", "India", "OpenStreetMap", "VIIRS", "MODIS", "MW", "km", "CSV", "Google", "Maps", "HeatDetect"]);
 
 const MAX_LENGTH = 900;
 
@@ -73,7 +73,7 @@ const CAUSAL =
  * at 31.5 MW" about a location the data never identified.
  */
 const TYPE_WORDS =
-  /\b(mines?|mining|coal(?:field|fields)?|collier(?:y|ies)|refiner(?:y|ies)|factor(?:y|ies)|plants?|steel(?:works)?|cement|kilns?|bricks?|smelters?|furnaces?|power stations?|oil|gas|flares?|wells?|crops?|stubble|farms?|forests?|wildfires?|grassland|landfills?)\b/gi;
+  /\b(mines?|mining|coal(?:field|fields)?|collier(?:y|ies)|refiner(?:y|ies)|factor(?:y|ies)|plants?|steel(?:works)?|cement|kilns?|bricks?|smelters?|furnaces?|power stations?|oil|gas|flares?|(?:oil |gas )?wells|(?:oil|gas) well|crops?|stubble|farms?|forests?|wildfires?|grassland|landfills?)\b/gi;
 
 function numbersIn(text: string): string[] {
   return (text.match(NUMBER) ?? []).map((n) => n.replace(/,/g, ""));
@@ -326,20 +326,84 @@ function comparisonSupported(word: string, cited: string): boolean {
   return /#\d+/.test(cited) || new RegExp(`\\b${word}\\b`, "i").test(cited);
 }
 
+// --------------------------------------------------------------- talk --
+//
+// A sentence that says nothing about the data needs no citation: "Hi! What
+// would you like to know?" Requiring one made the model answer a greeting with
+// statistics ("I can't answer a greeting, but the data shows…", observed
+// 2026-10-23). Such a sentence may hold no number, no name, nothing about
+// heat sources and no amount, so a claim cannot pass as small talk.
+
+const ABOUT_THE_DATA =
+  /\b(fires?|burn(?:s|ing|t|ed)?|blaze|flames?|industr(?:y|ial)|vegetation|persistent|unclassified|classif(?:y|ied|ication)|accidents?|explosions?|incidents?|smoke|hotspots?|anomal(?:y|ies)|radiative|frp|mw|detected|detections?|seen|active|busiest|hottest)\b/i;
+const AMOUNTS =
+  /\b(most|many|majority|minority|numerous|dozens?|hundreds|thousands|millions|plenty|lots?|few|fewer|several|none|nobody|every|always|never|rare(?:ly)?|often|usually|mostly|mainly|largely|nearly all|almost all|all of)\b/i;
+
+/** Names conversation may use: the product and the sources it cites anyway. */
+const TALK_NAMES = new Set(["HeatDetect", "I", "NASA", "FIRMS", "OpenStreetMap", "Google", "Maps", "CSV"]);
+/** Ordinary sentence openings. Any other capitalised first word may be a place ("Odisha looks busy"). */
+const TALK_STARTS = new Set(
+  ("Hi Hello Hey Thanks Thank Sure Happy Glad Good Great Okay OK Yes No Of You Your I I'm I've I'll We " +
+    "What Which Where When How Why Want Would Could Can Just Let Ask Tell Feel Anytime Welcome Morning " +
+    "Evening Sorry Here There That This It Any Nice Hope Please Not Absolutely Certainly Right Got").split(" "),
+);
+const TYPE_WORD = new RegExp(TYPE_WORDS.source, "i");
+
+/** Why an uncited sentence is not plain conversation, or null if it is. */
+function notTalk(text: string): string | null {
+  if (claimedNumbers(text).length) return "it gave a number without citing a fact";
+  // Compared without a contraction: "You're" opens like "You".
+  const first = text.match(/^[A-Z][A-Za-z]*/)?.[0];
+  const names = [
+    ...(first && !TALK_STARTS.has(first) && !TALK_NAMES.has(first) ? [first] : []),
+    ...midSentenceProperNouns(text).filter((w) => !TALK_NAMES.has(w)),
+  ];
+  if (names.length) return `it named something without citing a fact (${[...new Set(names)].join(", ")})`;
+  if (TYPE_WORD.test(text)) return "it described a source without citing a fact";
+  if (AMOUNTS.test(text)) return "it said something about the data without citing a fact";
+  // An offer or a question back may mention the data's kinds ("Want me to list
+  // the possible industrial fires?"); with no number, name or amount, it
+  // asserts nothing. A statement about them does.
+  if (ABOUT_THE_DATA.test(text) && !OFFER.test(text)) return "it said something about the data without citing a fact";
+  if (claimedCertainty(text)) return "it claimed certainty";
+  return null;
+}
+
+// Anchored at the start (after an optional "Hi!", "Sure," …), so a statement
+// cannot pass by ending in "…, and I can list them".
+const OFFER =
+  /\?\s*$|^(?:(?:Hi|Hello|Hey|Sure|Okay|OK|Yes|Of course|Absolutely|Great|Thanks)[!,.]?\s+)?(?:Want me to|Would you like|Shall I|Should I|Do you want|Let me know|Ask me|Happy to|Feel free|I can|I could|I'm here to|I am here to)\b/i;
+
+/**
+ * `earlier` is what earlier answers in the conversation said; each sentence of
+ * it passed this check when it was shown, so a follow-up may restate its
+ * numbers, names and comparisons ("of the 1,602 spots, 92 are in Odisha").
+ * What the visitor typed is different: echoing their "24 hours" is fine, but
+ * their "Gujarat?" does not put a cited fact in Gujarat.
+ */
 export function verifyCited(
   sentence: CitedSentence,
   facts: CitableFact[],
   question: string,
+  earlier = "",
 ): CitedVerdict {
   const fail = (reason: string): CitedVerdict => ({ sentence, ok: false, reason });
-  const text = (sentence.text ?? "").trim();
+  // Citations are shown as buttons, so markers the model also wrote into the
+  // text are dropped (observed: "…how the classification system works cites: [4].").
+  const text = (sentence.text ?? "")
+    .replace(/\s*\(?\bcites?:\s*\[[\d,\s]*\]\)?/gi, "")
+    .replace(/\s*\[\d+(?:\s*,\s*\d+)*\]/g, "")
+    .trim();
   if (!text) return fail("it was empty");
   if (text.length > 600) return fail("it ran too long");
   if (LIST_LINE.test(text)) return fail("it was formatted as a list");
 
   const byId = new Map(facts.map((f) => [f.id, f]));
   const cites = [...new Set((sentence.cites ?? []).filter((c) => Number.isInteger(c)))];
-  if (cites.length === 0) return fail("it cited no fact");
+  if (cites.length === 0) {
+    const problem = notTalk(text);
+    return problem ? fail(problem) : { sentence: { text, cites: [] }, ok: true };
+  }
   const unknown = cites.filter((c) => !byId.has(c));
   if (unknown.length) return fail(`it cited facts that do not exist (${unknown.join(", ")})`);
   const citedFacts = cites.map((c) => byId.get(c)!);
@@ -351,8 +415,8 @@ export function verifyCited(
 
   // Anything the visitor typed may be echoed back, spelled out or not.
   const allowed = [
-    ...numbersIn(`${cited} ${question}`).map(Number),
-    ...claimedNumbers(question).map((c) => c.value),
+    ...numbersIn(`${cited} ${question} ${earlier}`).map(Number),
+    ...claimedNumbers(`${question} ${earlier}`).map((c) => c.value),
   ].filter(Number.isFinite);
   // Citation markers like "[3]" inside the text are references, not claims.
   const claimed = claimedNumbers(text.replace(/\[\d+(?:\s*,\s*\d+)*\]/g, " "));
@@ -377,7 +441,7 @@ export function verifyCited(
   if (types.length) return fail(`it described a source as something its cited facts do not (${types.join(", ")})`);
 
   const comparisons = [...new Set((text.match(COMPARATIVE) ?? []).map((w) => w.toLowerCase()))].filter(
-    (w) => !comparisonSupported(w, cited),
+    (w) => !comparisonSupported(w, `${cited} ${earlier}`),
   );
   if (comparisons.length) {
     return fail(`it made a comparison (${comparisons.join(", ")}) that no cited ranking supports`);
@@ -389,13 +453,15 @@ export function verifyCited(
   if (causal.length) return fail(`it asserted a cause (${causal.join(", ")}) its cited facts do not state`);
 
   // A lookup's description counts as cited: a ranked match ("#1 … 17.609° N")
-  // does not repeat the place its search was about.
+  // does not repeat the place its search was about. A name an earlier answer
+  // already used may be used again in a follow-up.
   const names = midSentenceProperNouns(text).filter(
     (w) =>
       !ALWAYS_ALLOWED.has(w) &&
       !cited.includes(w) &&
       !lookups.some((s) => s.includes(w)) &&
-      !askedPlace(w, lookups, question),
+      !askedPlace(w, lookups, question) &&
+      !new RegExp(`\\b${w}\\b`).test(earlier),
   );
   if (names.length) return fail(`it named something its cited facts do not (${[...new Set(names)].join(", ")})`);
 
