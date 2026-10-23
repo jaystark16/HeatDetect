@@ -150,3 +150,40 @@ describe("the proxy's Ollama route", () => {
     expect((await r.json()).error).toContain("ollama is not configured");
   });
 });
+
+describe("follow-ups", () => {
+  it("hand the earlier search's exact filters to the next question (observed: Odisha 66, then 61)", async () => {
+    const odisha = { class: "persistent_industrial", area: { south: 17.5, west: 81.5, north: 22.8, east: 87.5, name: "Odisha" } };
+    const researching = (prompts: string[]): Provider => {
+      let step = 0;
+      return {
+        name: "Ollama",
+        research: (_system, userText) => {
+          prompts.push(userText);
+          return {
+            step: async () => ({
+              model: "m",
+              tried: [],
+              calls: step++ === 0 ? [{ name: "search_locations", args: odisha }] : [],
+            }),
+            results: () => {},
+          };
+        },
+        write: async () => ({ model: "m", text: '{"answer": [{"text": "Listed below.", "cites": [1]}]}', tried: [] }),
+      };
+    };
+
+    const prompts: string[] = [];
+    const first = await askAgent("how many persistent industrial sources are in odisha", ctx, [], "brief", [researching(prompts)]);
+    expect(first.calls).toEqual([{ name: "search_locations", args: odisha }]);
+
+    await askAgent(
+      "give me those locations",
+      ctx,
+      [{ question: "how many persistent industrial sources are in odisha", answer: "There are 66.", calls: first.calls }],
+      "brief",
+      [researching(prompts)],
+    );
+    expect(prompts[1]).toContain(`Assistant looked up: search_locations ${JSON.stringify(odisha)}`);
+  });
+});

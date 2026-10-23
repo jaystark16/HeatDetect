@@ -5,6 +5,15 @@ and debugging discoveries. Don't repeat what git history or the code already say
 
 ## 2026-10-23
 
+- **"Give me those locations" got a count and no locations.** Brief mode allows one to
+  three sentences and no lists, and the location list showed only locations a sentence
+  cited; the answer cited the search total. A cited search total now lists that search's
+  ranked matches under a heading ("Top 25 of 66, ranked by distinct days seen"), and the
+  research prompt asks for a limit of 25 when locations are wanted.
+- **Follow-ups searched a different box.** "How many in Odisha?" → 66, then "give me
+  those locations" → 61: the model only saw the earlier answer's wording. The history now
+  carries each earlier tool call verbatim; retested, 66 then 66.
+
 - **A correct Vizag answer was withheld for saying "Vizag".** gpt-oss searched the right
   box (17.7° N, 83.3° E) but did not label it, and the check only accepted place names
   found in cited fact text. Now a place the user typed may be named from an unlabelled

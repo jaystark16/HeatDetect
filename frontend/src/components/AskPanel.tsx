@@ -16,6 +16,7 @@ import {
   type AskContext,
 } from "../assistant/intents";
 import * as llm from "../assistant/llm";
+import { answerLocations } from "../assistant/locations";
 import { verifyWording, type CitedVerdict } from "../assistant/verify";
 import { CLASS_STYLES } from "../classes";
 import { plainCoordinates } from "../maps";
@@ -71,6 +72,7 @@ function toHistory(turns: Turn[]): Exchange[] {
             .map((v) => v.sentence.text)
             .join(" ") || "(no answer shown)"
         : (t.wording ?? t.answer.summary),
+    calls: t.kind === "gemini" ? t.result.calls : undefined,
   }));
 }
 
@@ -442,14 +444,13 @@ function Sentences({
  */
 function Locations({
   title,
-  facts,
+  marks,
   onShow,
 }: {
   title: string;
-  facts: Fact[];
+  marks: MapMark[];
   onShow: (mark: MapMark) => void;
 }) {
-  const marks = [...new Map(facts.filter((f) => f.mark).map((f) => [f.mark!.id, f.mark!])).values()].slice(0, 25);
   if (marks.length === 0) return null;
   return (
     <>
@@ -494,10 +495,12 @@ function GeminiTurnView({
   const withheld = [...result.answer, ...result.analysis, ...result.caveats].filter((v) => !v.ok);
   const fellBack = result.tried.length > 0;
   const shown = [...result.answer, ...result.analysis, ...result.caveats].filter((v) => v.ok);
-  const citedFacts = facts.filter((f) => shown.some((v) => v.sentence.cites.includes(f.id)));
   // When the wording is withheld, what the lookups found is still computed
   // fact, shown as code wrote it rather than leaving a dead end.
   const lookedUp = facts.filter((f) => f.section.startsWith("lookup:"));
+  const listed = answerShown
+    ? answerLocations(facts, shown.flatMap((v) => v.sentence.cites))
+    : answerLocations(facts, lookedUp.map((f) => f.id));
 
   return (
     <div className="turn">
@@ -554,8 +557,8 @@ function GeminiTurnView({
         )}
 
         <Locations
-          title={answerShown ? "Locations in this answer" : "Locations found"}
-          facts={answerShown ? citedFacts : lookedUp}
+          title={listed.heading ?? (answerShown ? "Locations in this answer" : "Locations found")}
+          marks={listed.marks}
           onShow={onShow}
         />
 

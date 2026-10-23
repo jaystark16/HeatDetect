@@ -104,8 +104,11 @@ Call tools whenever the question needs anything the briefing does not already st
 a region, a class or time filter, a threshold, a specific location, a comparison. You
 may call several, and search again with different filters. If the user names a place,
 pass your best approximate box for it with its name; it will be reported as an
-approximation. Interpret follow-ups ("what about last week?") using the conversation.
-Do not write the answer here. When you have what you need, reply with the word DONE.`;
+approximation. Interpret follow-ups ("what about last week?", "give me those locations")
+using the conversation, repeating the earlier search's filters. When the user asks for
+locations, coordinates, a list or "which ones", search with a limit of 25 and the sort
+that fits the question. Do not write the answer here. When you have what you need,
+reply with the word DONE.`;
 
 const RULES = `Rules for every sentence:
 - Cite the fact numbers it rests on in "cites". Every sentence needs at least one.
@@ -122,6 +125,10 @@ const RULES = `Rules for every sentence:
   a count of industrial ones; give the class breakdown instead. (Observed: 27 locations,
   12 of them unclassified, described as "27 consistent with industrial activity".)
 - When a location's evidence was looked up, lead with how that location is classified.
+- When the user asks for locations or a list, cite the search fact ("Search of all …")
+  together with its ranked matches. The page lists every match that search returned,
+  with coordinates and map links, under your answer; say how many there are and how they
+  are ranked, and name only the top one or two in the sentence.
 - If the facts cannot answer the question, say so in one sentence and say what they
   can show.`;
 
@@ -156,6 +163,8 @@ export interface Exchange {
   question: string;
   /** What the user was shown. */
   answer: string;
+  /** The tool calls behind that answer, exactly as made. */
+  calls?: ToolCall[];
 }
 
 export interface GeminiAnswer {
@@ -175,6 +184,8 @@ export interface GeminiAnswer {
   facts: Fact[];
   /** What the model looked up, in plain words. */
   lookups: string[];
+  /** The same lookups as calls, so a follow-up can repeat their exact filters. */
+  calls: ToolCall[];
 }
 
 export class GeminiError extends Error {
@@ -419,9 +430,21 @@ export const PROVIDERS: Provider[] = [...(VIA_PROXY ? [ollama] : []), ...(GEMINI
 function historyText(history: Exchange[]): string {
   const recent = history.slice(-HISTORY_TURNS);
   if (recent.length === 0) return "";
+  // The calls go in verbatim. Observed: "how many in Odisha?" then "give me
+  // those locations" searched a slightly different box (66, then 61), because
+  // the earlier filters were visible only through the answer's wording.
   return (
     "Conversation so far:\n" +
-    recent.map((h) => `User: ${h.question}\nAssistant: ${h.answer}`).join("\n\n") +
+    recent
+      .map(
+        (h) =>
+          `User: ${h.question}\n` +
+          (h.calls?.length
+            ? `Assistant looked up: ${h.calls.map((c) => `${c.name} ${JSON.stringify(c.args)}`).join("; ")}\n`
+            : "") +
+          `Assistant: ${h.answer}`,
+      )
+      .join("\n\n") +
     "\n\n"
   );
 }
@@ -476,6 +499,7 @@ async function askWith(
   const started = performance.now();
   const facts: Fact[] = [...buildBriefing(question, ctx).facts];
   const lookups: string[] = [];
+  const made: ToolCall[] = [];
   const tried: Tried = [];
   const earlier = historyText(history);
 
@@ -501,7 +525,10 @@ async function askWith(
     const items = [];
     for (const call of calls) {
       const run = await runTool(call.name, call.args, ctx);
-      if (!run.error) lookups.push(run.summary);
+      if (!run.error) {
+        lookups.push(run.summary);
+        made.push(call);
+      }
       const returned: { id: number; text: string }[] = [];
       for (const f of run.facts) {
         if (facts.length >= MAX_FACTS) break;
@@ -560,6 +587,7 @@ async function askWith(
     seconds: (performance.now() - started) / 1000,
     facts,
     lookups,
+    calls: made,
   };
 }
 

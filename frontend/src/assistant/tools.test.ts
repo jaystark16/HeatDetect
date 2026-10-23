@@ -12,6 +12,7 @@ import { handle } from "../../../proxy/worker.mjs";
 import { locationToMark } from "../api";
 import type { Analytics, HotspotDetail, LocationSummary, MapMark, ModelInfo } from "../types";
 import { haversineKm, type AskContext } from "./intents";
+import { answerLocations } from "./locations";
 import { runTool, TOOL_DECLARATIONS } from "./tools";
 import { verifyCited } from "./verify";
 
@@ -244,5 +245,51 @@ describe("naming the place the user asked about", () => {
       ctx,
     );
     expect(run.facts[0].text).toContain("the assistant's approximation of Vizag (not an official position)");
+  });
+});
+
+describe("locations listed under an answer", () => {
+  const numbered = (runs: Awaited<ReturnType<typeof runTool>>[]) => {
+    let id = 0;
+    return runs.flatMap((run) =>
+      run.facts.map((f) => ({ id: ++id, section: `lookup: ${run.summary}`, text: f.text, mark: f.mark })),
+    );
+  };
+
+  it("lists a search's matches when the answer cites only its total (observed: count, no locations)", async () => {
+    const run = await runTool("search_locations", { seen_within_hours: 24, limit: 25 }, ctx);
+    const facts = numbered([run]);
+    const list = answerLocations(facts, [1]);
+    const expected = run.facts.filter((f) => f.mark).map((f) => f.mark!.id);
+    expect(list.marks.map((m) => m.id)).toEqual(expected);
+    const total = marks.filter((m) => Date.parse(m.last_seen) >= NOW - 24 * 3_600_000).length;
+    expect(list.heading).toBe(
+      total <= 25
+        ? `All ${total.toLocaleString()}, ranked by distinct days seen`
+        : `Top 25 of ${total.toLocaleString()}, ranked by distinct days seen`,
+    );
+  });
+
+  it("says nearest first for a point search", async () => {
+    const run = await runTool("search_locations", { near: { latitude: 23.75, longitude: 86.42, radius_km: 5 } }, ctx);
+    expect(answerLocations(numbered([run]), [1]).heading).toMatch(/, nearest first$/);
+  });
+
+  it("drops the heading when the list mixes two searches", async () => {
+    const a = await runTool("search_locations", { class: "persistent_industrial", limit: 3 }, ctx);
+    const b = await runTool("search_locations", { class: "natural_fire", limit: 3 }, ctx);
+    const facts = numbered([a, b]);
+    const totals = facts.filter((f) => f.text.startsWith("Search of all")).map((f) => f.id);
+    const list = answerLocations(facts, totals);
+    expect(list.heading).toBeNull();
+    expect(list.marks).toHaveLength(6);
+  });
+
+  it("lists only the cited location when the answer cites one match", async () => {
+    const run = await runTool("search_locations", { class: "persistent_industrial", limit: 5 }, ctx);
+    const facts = numbered([run]);
+    const list = answerLocations(facts, [2]);
+    expect(list.marks.map((m) => m.id)).toEqual([run.facts[1].mark!.id]);
+    expect(list.heading).toBeNull();
   });
 });
