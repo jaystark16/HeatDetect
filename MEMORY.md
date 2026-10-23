@@ -13,6 +13,10 @@ and debugging discoveries. Don't repeat what git history or the code already say
   subdomain.** The first deploy uploaded the script and then failed; registering the
   subdomain once in the dashboard fixed it. The new URL then failed TLS for about a
   minute while its certificate was issued.
+- **The public Ask tab answers with Ollama (2026-10-23).** "anything burning in Gujarat
+  this week?" → 13 persistent, 70 vegetation in 8.5 s; the deep follow-up → 13 / 91 (a
+  wider box), top source 21.101° N, 72.641° E at 55 days, 49.1 MW. All matched a recount
+  from the live snapshot.
 - **No Ollama model enforces a JSON schema.** `format` and `response_format` were both
   ignored; replies came back as prose, fenced JSON, or `{"answer": 15}`. The shape is now
   checked on arrival with one retry.
