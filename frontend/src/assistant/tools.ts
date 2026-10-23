@@ -58,7 +58,13 @@ const AREA = {
     west: { type: "NUMBER" },
     north: { type: "NUMBER" },
     east: { type: "NUMBER" },
-    name: { type: "STRING", description: "The place the box approximates, if any" },
+    name: {
+      type: "STRING",
+      // Without the name, an answer cannot say "around Gujarat": the citation
+      // check only lets a place be named from a fact that carries it.
+      description:
+        "Required whenever the user named a place: the place this box approximates, e.g. 'Gujarat'. Without it the answer cannot mention the place.",
+    },
   },
   required: ["south", "west", "north", "east"],
 };

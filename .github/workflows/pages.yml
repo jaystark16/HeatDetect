@@ -139,7 +139,9 @@ jobs:
           # straight from the browser. This puts the key in the public
           # JavaScript, where anyone can copy it. Owner's decision, 2026-10-08,
           # to run without the proxy; see frontend/src/assistant/direct.ts.
-          VITE_GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          # Once the proxy exists it holds the key, so the build leaves it out:
+          # an unused key would still be inlined into the public bundle.
+          VITE_GEMINI_API_KEY: ${{ vars.ASSISTANT_URL == '' && secrets.GEMINI_API_KEY || '' }}
         run: npm run build
 
       - uses: actions/configure-pages@v5

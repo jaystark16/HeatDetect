@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Fact } from "../assistant/briefing";
 import {
   askAgent,
-  GEMINI_CONFIGURED,
+  ASSISTANT_CONFIGURED,
+  PROVIDERS,
   type Depth,
   type Exchange,
   type GeminiAnswer,
@@ -49,14 +50,14 @@ interface LocalTurn {
   /** On-device wording that passed the gate; null means the computed answer is shown. */
   wording: string | null;
   rejected: string | null;
-  /** Why Gemini was not used, when it was configured but failed. */
+  /** Why the model services were not used, when configured but failing. */
   geminiFailure: string | null;
   seconds: number;
 }
 
 type Turn = GeminiTurn | LocalTurn;
 
-/** The conversation as the user saw it, so follow-ups make sense to Gemini. */
+/** The conversation as the user saw it, so follow-ups make sense to the model. */
 function toHistory(turns: Turn[]): Exchange[] {
   return turns.map((t) => ({
     question: t.question,
@@ -84,7 +85,7 @@ const SUGGESTIONS = [
 ];
 
 /**
- * Questions about the data, answered by Gemini from facts the page computes.
+ * Questions about the data, answered by Ollama or Gemini from facts the page computes.
  *
  * Gemini sees a numbered briefing of the real data and the system's own
  * analysis, and must cite those numbers in every sentence; each sentence is
@@ -193,7 +194,7 @@ export default function AskPanel({ context, onShow }: Props) {
       setDraft("");
 
       let turn: Turn;
-      if (GEMINI_CONFIGURED) {
+      if (ASSISTANT_CONFIGURED) {
         try {
           const result = await askAgent(q, context, toHistory(turns), depth);
           turn = {
@@ -207,7 +208,7 @@ export default function AskPanel({ context, onShow }: Props) {
           turn = await askLocally(
             q,
             context,
-            cause instanceof Error ? cause.message : "Gemini could not answer.",
+            cause instanceof Error ? cause.message : "The model service could not answer.",
           );
         }
       } else {
@@ -227,10 +228,12 @@ export default function AskPanel({ context, onShow }: Props) {
   return (
     <div className="ask">
       <div className="ask__intro">
-        {GEMINI_CONFIGURED ? (
+        {ASSISTANT_CONFIGURED ? (
           <p>
-            Short, cited answers by <strong>Google Gemini</strong>, checked against the
-            data. Questions are sent to Google’s Gemini service.
+            Short, cited answers by <strong>{PROVIDERS.map((p) => p.name).join(" or ")}</strong>,
+            reasoning over HeatDetect's own classifications and checked against the data.
+            Questions are sent to {PROVIDERS.map((p) => p.name).join(" and ")} through
+            HeatDetect's server.
           </p>
         ) : (
           <p>
@@ -238,7 +241,7 @@ export default function AskPanel({ context, onShow }: Props) {
             detections; nothing is guessed.
           </p>
         )}
-        <ModelCard state={model} onLoad={loadModel} fallbackOnly={GEMINI_CONFIGURED} />
+        <ModelCard state={model} onLoad={loadModel} fallbackOnly={ASSISTANT_CONFIGURED} />
       </div>
 
       <div className="ask__turns">
@@ -268,8 +271,8 @@ export default function AskPanel({ context, onShow }: Props) {
 
         {busy && (
           <p className="ask__busy">
-            {GEMINI_CONFIGURED
-              ? "Gemini is analysing the briefing…"
+            {ASSISTANT_CONFIGURED
+              ? "Looking things up in the data, then writing the answer…"
               : model.status === "ready"
                 ? "Computing, then wording on this device…"
                 : "Computing…"}
@@ -448,7 +451,7 @@ function GeminiTurnView({
       <p className="turn__question">{deep ? `Deeper: ${turn.question}` : turn.question}</p>
       <div className="turn__answer">
         <p className="turn__routed">
-          <strong>Gemini</strong>
+          <strong>{result.provider}</strong>
           <span className="turn__meta">
             {" "}· {result.model} · {result.seconds.toFixed(1)} s
             {fellBack && ` · after ${result.tried.length} busy attempt${result.tried.length === 1 ? "" : "s"}`}
@@ -550,7 +553,7 @@ function LocalTurnView({ turn, onShow }: { turn: LocalTurn; onShow: (mark: MapMa
       <div className="turn__answer">
         {turn.geminiFailure && (
           <p className="turn__fallback">
-            Gemini was not used: {turn.geminiFailure} Answered from the data instead.
+            The model services did not answer: {turn.geminiFailure} Answered from the data instead.
           </p>
         )}
         <p className="turn__routed">

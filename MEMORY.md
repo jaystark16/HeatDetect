@@ -3,6 +3,21 @@
 Append-only, newest first. Record decisions and their reasons, failures and why,
 and debugging discoveries. Don't repeat what git history or the code already says.
 
+## 2026-10-23
+
+- **Ollama Cloud added; it answers first.** Free plan: gpt-oss:120b, gemma4:31b,
+  gpt-oss:20b; other big models return 402. Ollama has no browser path (CORS preflight
+  405), so it needs the proxy, and the owner chose to create the Cloudflare account.
+  `OLLAMA_API_KEY` is set as a GitHub secret; `CLOUDFLARE_API_TOKEN` and
+  `CLOUDFLARE_ACCOUNT_ID` are still needed from the owner.
+- **No Ollama model enforces a JSON schema.** `format` and `response_format` were both
+  ignored; replies came back as prose, fenced JSON, or `{"answer": 15}`. The shape is now
+  checked on arrival with one retry.
+- **A model asked for a class that does not exist and would have got everything.** The
+  search treated an unknown class as "any"; it now refuses with the valid values.
+- **The Pages build no longer inlines the Gemini key once the proxy exists.** Unused, it
+  would still have been in the public bundle.
+
 ## 2026-10-09
 
 - **The Ask tab looks things up instead of reading a fixed briefing.** Gemini only saw ~75

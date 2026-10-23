@@ -53,16 +53,19 @@ down when idle, which is why keep-warm exists.
 | `FIRMS_MAP_KEY` | secret | pages.yml backfill | ✅ |
 | `CLOUDFLARE_API_TOKEN` | secret | assistant.yml | ❌ |
 | `CLOUDFLARE_ACCOUNT_ID` | secret | assistant.yml | ❌ |
-| `GEMINI_API_KEY` | secret | assistant.yml → Worker secret | ❌ |
+| `OLLAMA_API_KEY` | secret | assistant.yml → Worker secret (answers first) | ✅ 2026-10-23 |
+| `GEMINI_API_KEY` | secret | assistant.yml → Worker secret (fallback); pages.yml only while `ASSISTANT_URL` is unset | ❌ |
 | `API_BASE_URL` | variable | pages.yml (`VITE_API_BASE`), keep-warm.yml | ❌ |
 | `ASSISTANT_URL` | variable | pages.yml (`VITE_ASSISTANT_URL`), assistant.yml (health check) | ❌ |
 | `DATABASE_URL` | env | backend; switches to Postgres | not used |
 
-Local-only, git-ignored: `proxy/.dev.vars` (`GEMINI_API_KEY`) and `frontend/.env.local`
+Local-only, git-ignored: `proxy/.dev.vars` (`OLLAMA_API_KEY`, `GEMINI_API_KEY`) and `frontend/.env.local`
 (`VITE_ASSISTANT_URL`).
 
 ## Enabling the assistant proxy
 
 Owner steps (full detail in `proxy/README.md`): create a Cloudflare API token and note
-the account ID, create a fresh Gemini key, add the three secrets, run **Deploy assistant
-proxy**, set `ASSISTANT_URL` to the printed Worker URL, and re-run the Pages workflow.
+the account ID, add `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` (`OLLAMA_API_KEY` is
+already set), run **Deploy assistant proxy**, set `ASSISTANT_URL` to the printed Worker URL,
+and re-run the Pages workflow. Ollama cannot be called from a browser at all (its CORS
+preflight returns 405), so without the proxy the Ask tab cannot use it.

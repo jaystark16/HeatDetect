@@ -33,11 +33,16 @@ const BASE = (import.meta.env.VITE_ASSISTANT_URL ?? "").replace(/\/$/, "");
 /** Used only when no proxy URL is set. Public once built: see direct.ts. */
 const DIRECT_KEY = (import.meta.env.VITE_GEMINI_API_KEY ?? "").trim();
 
-/** True when the build can reach Gemini through the proxy. */
-export const GEMINI_VIA_PROXY = BASE !== "";
+/** True when the build has the key-holding proxy, which serves Ollama and Gemini. */
+export const VIA_PROXY = BASE !== "";
+/** Kept for callers that still use the older name. */
+export const GEMINI_VIA_PROXY = VIA_PROXY;
 
-/** False when the build has neither a proxy URL nor a key. */
-export const GEMINI_CONFIGURED = GEMINI_VIA_PROXY || DIRECT_KEY !== "";
+/** True when Gemini is reachable, through the proxy or with a build-time key. */
+const GEMINI_CONFIGURED = VIA_PROXY || DIRECT_KEY !== "";
+
+/** False when the build can reach no model service at all. */
+export const ASSISTANT_CONFIGURED = VIA_PROXY || GEMINI_CONFIGURED;
 
 /** Accuracy over speed: busy models are retried before lighter ones. */
 const TIMEOUT_MS = 240_000;
@@ -154,6 +159,8 @@ export interface Exchange {
 }
 
 export interface GeminiAnswer {
+  /** Which service answered. */
+  provider: "Ollama" | "Gemini";
   depth: Depth;
   model: string;
   /** Busy or failed attempts made before the answer, across both phases. */
@@ -166,7 +173,7 @@ export interface GeminiAnswer {
   seconds: number;
   /** Every fact available to the answer: the briefing, then each lookup. */
   facts: Fact[];
-  /** What Gemini looked up, in plain words. */
+  /** What the model looked up, in plain words. */
   lookups: string[];
 }
 
@@ -184,14 +191,34 @@ interface RawAnswer {
   follow_up_questions?: string[];
 }
 
-interface FunctionCall {
+export interface ToolCall {
   id?: string;
   name: string;
-  args?: Record<string, unknown>;
+  args: Record<string, unknown>;
 }
 
+type Tried = { model: string; status: number }[];
+
+/** One model conversation during research. */
+interface ResearchSession {
+  /** Ask once; record the model's message; return the tools it called (none = done). */
+  step(): Promise<{ model: string; tried: Tried; calls: ToolCall[] }>;
+  /** Hand tool results back, one per call, in order. */
+  results(items: { call: ToolCall; response: object }[]): void;
+}
+
+/** A model service that can research with tools and then write the answer. */
+export interface Provider {
+  name: "Ollama" | "Gemini";
+  research(system: string, userText: string): ResearchSession;
+  /** The final answer as JSON text in the shape SHAPES[depth] describes. */
+  write(system: string, prompt: string, depth: Depth): Promise<{ model: string; text: string; tried: Tried }>;
+}
+
+// ------------------------------------------------------------------ Gemini --
+
 async function generate(request: DirectRequest, models?: string[]): Promise<DirectResult> {
-  if (GEMINI_VIA_PROXY) {
+  if (VIA_PROXY) {
     let response: Response;
     try {
       response = await fetch(`${BASE}/generate`, {
@@ -230,6 +257,165 @@ async function generate(request: DirectRequest, models?: string[]): Promise<Dire
   return result;
 }
 
+const gemini: Provider = {
+  name: "Gemini",
+  research(system, userText) {
+    const contents: Content[] = [{ role: "user", parts: [{ text: userText }] }];
+    let pinned: string[] | undefined;
+    return {
+      async step() {
+        const reply = await generate({ system, contents, tools: TOOL_DECLARATIONS }, pinned);
+        pinned ??= [reply.model!];
+        const calls = (reply.content?.parts ?? [])
+          .map((p) => p.functionCall as { id?: string; name?: string; args?: Record<string, unknown> } | undefined)
+          .filter((c): c is { id?: string; name: string; args?: Record<string, unknown> } => Boolean(c?.name))
+          .map((c) => ({ id: c.id, name: c.name, args: c.args ?? {} }));
+        // Resent exactly as received: tool calls carry signatures the model checks.
+        if (calls.length) contents.push(reply.content!);
+        return { model: reply.model!, tried: reply.tried, calls };
+      },
+      results(items) {
+        contents.push({
+          role: "user",
+          parts: items.map(({ call, response }) => ({
+            functionResponse: { ...(call.id ? { id: call.id } : {}), name: call.name, response },
+          })),
+        });
+      },
+    };
+  },
+  async write(system, prompt, depth) {
+    const reply = await generate({ system, prompt, schema: SCHEMAS[depth] });
+    return { model: reply.model!, text: reply.text ?? "", tried: reply.tried };
+  },
+};
+
+// ------------------------------------------------------------------ Ollama --
+
+interface OllamaMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  content: string;
+  tool_calls?: { function: { name: string; arguments: unknown } }[];
+  tool_name?: string;
+  [key: string]: unknown;
+}
+
+/** Gemini's schema dialect uses upper-case types; Ollama takes JSON Schema. */
+function toJsonSchema(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map(toJsonSchema);
+  if (!node || typeof node !== "object") return node;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(node)) {
+    out[k] = k === "type" && typeof v === "string" ? v.toLowerCase() : toJsonSchema(v);
+  }
+  return out;
+}
+
+const OLLAMA_TOOLS = TOOL_DECLARATIONS.map((t) => ({
+  type: "function",
+  function: { name: t.name, description: t.description, parameters: toJsonSchema(t.parameters) },
+}));
+
+async function ollamaChat(
+  messages: OllamaMessage[],
+  options: { tools?: boolean; models?: string[] },
+): Promise<{ model: string; message: OllamaMessage; tried: Tried }> {
+  let response: Response;
+  try {
+    response = await fetch(`${BASE}/ollama/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+      body: JSON.stringify({
+        messages,
+        ...(options.tools ? { tools: OLLAMA_TOOLS } : {}),
+        ...(options.models ? { models: options.models } : {}),
+      }),
+    });
+  } catch (cause) {
+    throw new GeminiError(
+      cause instanceof DOMException && cause.name === "TimeoutError"
+        ? "Ollama did not answer in time."
+        : "The assistant service could not be reached.",
+    );
+  }
+  const body = (await response.json().catch(() => null)) as
+    | { model?: string; message?: OllamaMessage; tried?: Tried; error?: string }
+    | null;
+  if (!response.ok || !body?.model || !body.message) {
+    const tried = body?.tried?.map((t) => `${t.model} ${t.status}`).join(", ");
+    throw new GeminiError(
+      `Ollama: ${body?.error ?? `the assistant service returned ${response.status}`}${tried ? ` (tried: ${tried})` : ""}.`,
+    );
+  }
+  return { model: body.model, message: body.message, tried: body.tried ?? [] };
+}
+
+/**
+ * Ollama Cloud does not enforce a response schema (measured on every free
+ * model, on both its native and OpenAI-compatible endpoints), so the shape is
+ * spelled out in words and checked on arrival; see parseAnswer.
+ */
+const SHAPES: Record<Depth, string> = {
+  brief: `Reply with only a JSON object, no markdown fences, exactly in this shape:
+{"answer": [{"text": "One sentence.", "cites": [3]}, {"text": "Another sentence.", "cites": [7, 9]}]}`,
+  deep: `Reply with only a JSON object, no markdown fences, exactly in this shape:
+{"answer": [{"text": "…", "cites": [3]}],
+ "analysis": [{"text": "…", "cites": [5]}],
+ "caveats": [{"text": "…", "cites": [2]}],
+ "follow_up_questions": ["…"]}`,
+};
+
+const ollama: Provider = {
+  name: "Ollama",
+  research(system, userText) {
+    const messages: OllamaMessage[] = [
+      { role: "system", content: system },
+      { role: "user", content: userText },
+    ];
+    let pinned: string[] | undefined;
+    return {
+      async step() {
+        const reply = await ollamaChat(messages, { tools: true, models: pinned });
+        pinned ??= [reply.model];
+        const calls = (reply.message.tool_calls ?? []).map((tc) => {
+          let args = tc.function.arguments;
+          if (typeof args === "string") {
+            try {
+              args = JSON.parse(args);
+            } catch {
+              args = {};
+            }
+          }
+          return { name: tc.function.name, args: (args ?? {}) as Record<string, unknown> };
+        });
+        if (calls.length) messages.push(reply.message);
+        return { model: reply.model, tried: reply.tried, calls };
+      },
+      results(items) {
+        for (const { call, response } of items) {
+          messages.push({ role: "tool", tool_name: call.name, content: JSON.stringify(response) });
+        }
+      },
+    };
+  },
+  async write(system, prompt, depth) {
+    const reply = await ollamaChat(
+      [
+        { role: "system", content: `${system}\n\n${SHAPES[depth]}` },
+        { role: "user", content: prompt },
+      ],
+      {},
+    );
+    return { model: reply.model, text: reply.message.content ?? "", tried: reply.tried };
+  },
+};
+
+/** The services this build can reach, in the order to try them. */
+export const PROVIDERS: Provider[] = [...(VIA_PROXY ? [ollama] : []), ...(GEMINI_CONFIGURED ? [gemini] : [])];
+
+// -------------------------------------------------------------- the agent --
+
 function historyText(history: Exchange[]): string {
   const recent = history.slice(-HISTORY_TURNS);
   if (recent.length === 0) return "";
@@ -240,56 +426,81 @@ function historyText(history: Exchange[]): string {
   );
 }
 
-export async function askAgent(
+function isSentenceList(v: unknown): v is CitedSentence[] {
+  return (
+    Array.isArray(v) &&
+    v.every(
+      (s) =>
+        s &&
+        typeof s === "object" &&
+        typeof (s as CitedSentence).text === "string" &&
+        Array.isArray((s as CitedSentence).cites) &&
+        (s as CitedSentence).cites.every((c) => Number.isInteger(c)),
+    )
+  );
+}
+
+/**
+ * The model's reply as an answer, or why it is not one. Tolerates markdown
+ * fences and text around the JSON (Ollama models add both), never a
+ * different shape: an answer given as a bare number, or with its citations
+ * under another name, is rejected rather than guessed at.
+ */
+export function parseAnswer(text: string, depth: Depth): RawAnswer | string {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start === -1 || end <= start) return "it was not JSON";
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text.slice(start, end + 1));
+  } catch {
+    return "it was not valid JSON";
+  }
+  const r = raw as Record<string, unknown>;
+  if (!isSentenceList(r.answer)) return 'its "answer" was not a list of {"text", "cites"} sentences';
+  if (depth === "deep") {
+    for (const k of ["analysis", "caveats"] as const) {
+      if (r[k] !== undefined && !isSentenceList(r[k])) return `its "${k}" was not a list of sentences`;
+    }
+  }
+  return r as RawAnswer;
+}
+
+async function askWith(
+  provider: Provider,
   question: string,
   ctx: AskContext,
-  history: Exchange[] = [],
-  depth: Depth = "brief",
+  history: Exchange[],
+  depth: Depth,
 ): Promise<GeminiAnswer> {
-  if (!GEMINI_CONFIGURED) throw new GeminiError("No assistant service is configured.");
   const started = performance.now();
-
   const facts: Fact[] = [...buildBriefing(question, ctx).facts];
   const lookups: string[] = [];
-  const tried: { model: string; status: number }[] = [];
+  const tried: Tried = [];
   const earlier = historyText(history);
 
   // --- Phase 1: research.
-  const contents: Content[] = [
-    {
-      role: "user",
-      parts: [
-        {
-          text: `${earlier}Briefing:\n${renderFacts(facts)}\n\nQuestion: ${question}`,
-        },
-      ],
-    },
-  ];
-  let pinned: string[] | undefined;
+  const session = provider.research(
+    RESEARCH,
+    `${earlier}Briefing:\n${renderFacts(facts)}\n\nQuestion: ${question}`,
+  );
   for (let round = 0; round < MAX_ROUNDS; round++) {
-    let reply: DirectResult;
+    let step;
     try {
-      reply = await generate({ system: RESEARCH, contents, tools: TOOL_DECLARATIONS }, pinned);
+      step = await session.step();
     } catch (cause) {
       // Nothing found yet means nothing to answer from beyond the briefing;
       // with lookups already made, answer from those rather than lose them.
       if (round === 0) throw cause;
       break;
     }
-    tried.push(...reply.tried);
-    pinned ??= [reply.model!];
-
-    const calls = (reply.content?.parts ?? [])
-      .map((p) => p.functionCall as FunctionCall | undefined)
-      .filter((c): c is FunctionCall => Boolean(c?.name))
-      .slice(0, MAX_CALLS_PER_ROUND);
+    tried.push(...step.tried);
+    const calls = step.calls.slice(0, MAX_CALLS_PER_ROUND);
     if (calls.length === 0) break;
 
-    // Resent exactly as received: tool calls carry signatures the model checks.
-    contents.push(reply.content!);
-    const responses = [];
+    const items = [];
     for (const call of calls) {
-      const run = await runTool(call.name, call.args ?? {}, ctx);
+      const run = await runTool(call.name, call.args, ctx);
       if (!run.error) lookups.push(run.summary);
       const returned: { id: number; text: string }[] = [];
       for (const f of run.facts) {
@@ -297,33 +508,33 @@ export async function askAgent(
         facts.push({ id: facts.length + 1, section: `lookup: ${run.summary}`, text: f.text, mark: f.mark });
         returned.push({ id: facts.length, text: f.text });
       }
-      responses.push({
-        functionResponse: {
-          ...(call.id ? { id: call.id } : {}),
-          name: call.name,
-          response: run.error
-            ? { error: run.error }
-            : { facts: returned, ...(returned.length < run.facts.length ? { note: "truncated" } : {}) },
-        },
+      items.push({
+        call,
+        response: run.error
+          ? { error: run.error }
+          : { facts: returned, ...(returned.length < run.facts.length ? { note: "truncated" } : {}) },
       });
     }
-    contents.push({ role: "user", parts: responses });
+    session.results(items);
   }
 
-  // --- Phase 2: answer, from every fact gathered. A fresh request, so any
-  // model may write it.
-  const reply = await generate({
-    system: SYSTEMS[depth],
-    prompt: `${earlier}Facts:\n${renderFacts(facts)}\n\nQuestion: ${question}`,
-    schema: SCHEMAS[depth],
-  });
+  // --- Phase 2: answer, from every fact gathered. A wrong shape gets one
+  // second chance with the reason; after that the question fails loudly.
+  const prompt = `${earlier}Facts:\n${renderFacts(facts)}\n\nQuestion: ${question}`;
+  let reply = await provider.write(SYSTEMS[depth], prompt, depth);
   tried.push(...reply.tried);
-
-  let raw: RawAnswer;
-  try {
-    raw = JSON.parse(reply.text ?? "") as RawAnswer;
-  } catch {
-    throw new GeminiError("Gemini's reply was not the structured answer requested.");
+  let raw = parseAnswer(reply.text, depth);
+  if (typeof raw === "string") {
+    reply = await provider.write(
+      SYSTEMS[depth],
+      `${prompt}\n\nYour previous reply could not be used because ${raw}. Reply again in exactly the required JSON shape.`,
+      depth,
+    );
+    tried.push(...reply.tried);
+    raw = parseAnswer(reply.text, depth);
+    if (typeof raw === "string") {
+      throw new GeminiError(`${provider.name}'s reply was not the structured answer requested (${raw}).`);
+    }
   }
 
   const check = (items: CitedSentence[] | undefined) =>
@@ -337,8 +548,9 @@ export async function askAgent(
     .slice(0, 3);
 
   return {
+    provider: provider.name,
     depth,
-    model: reply.model!,
+    model: reply.model,
     tried,
     answer,
     analysis,
@@ -349,4 +561,28 @@ export async function askAgent(
     facts,
     lookups,
   };
+}
+
+/**
+ * Ask the first service that answers. A failure moves on to the next one;
+ * if every service fails, the error names each failure, so the page can say
+ * why it fell back to the computed answer.
+ */
+export async function askAgent(
+  question: string,
+  ctx: AskContext,
+  history: Exchange[] = [],
+  depth: Depth = "brief",
+  providers: Provider[] = PROVIDERS,
+): Promise<GeminiAnswer> {
+  if (providers.length === 0) throw new GeminiError("No assistant service is configured.");
+  const failures: string[] = [];
+  for (const provider of providers) {
+    try {
+      return await askWith(provider, question, ctx, history, depth);
+    } catch (cause) {
+      failures.push(cause instanceof Error ? cause.message : `${provider.name} failed.`);
+    }
+  }
+  throw new GeminiError(failures.join(" "));
 }

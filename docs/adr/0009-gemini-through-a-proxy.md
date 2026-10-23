@@ -83,6 +83,23 @@ Measured locally, direct mode: three natural questions answered in 30–190 s, e
 matching an independent recount; one wording error (a mixed-class count described as
 industrial) fixed in the prompt and re-verified.
 
+## Revised 2026-10-23: Ollama Cloud answers first
+
+The owner provided an Ollama Cloud key. Measured: the free plan serves gpt-oss:120b
+(~1.5 s, calls tools), gemma4:31b and gpt-oss:20b; DeepSeek, Kimi, GLM and MiniMax
+returned 402 "not in the Free plan". Ollama refuses browser calls from other sites (CORS
+preflight 405), so it is reached only through the proxy's `/ollama/chat`. No free model
+enforced a JSON schema on either endpoint, so the answer's shape is checked on arrival
+(`parseAnswer`) with one retry that states the problem; the citation check is unchanged.
+gpt-oss also asked for a class that does not exist ("vegetation fire"), which the search
+used to widen to every class; invalid arguments are now refused back to the model.
+
+Order: Ollama through the proxy, then Gemini, then the computed answer. Locally, against
+the live snapshot: "anything burning in Gujarat this week?" → 13 / 34 / 222 (persistent /
+vegetation / unclassified) in 11 s; the follow-up "only the industrial ones there?" → 13,
+top two at 55 days, 49 and 37 MW. Every number matched an independent recount. A sentence
+naming Gujarat was withheld when gpt-oss left the box unnamed, as designed.
+
 ## Consequences
 
 - Questions and the briefing are sent to Google; the Ask tab says so.

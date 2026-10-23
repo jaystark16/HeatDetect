@@ -1,12 +1,15 @@
 /**
  * HeatDetect assistant proxy — a Cloudflare Worker.
  *
- * Holds the Gemini API key server-side, so it never reaches a browser. The
- * dashboard is a static site; without this, the only way to call Gemini would
- * be to ship the key in public JavaScript, where anyone can copy it.
+ * Holds the model API keys server-side, so they never reach a browser. The
+ * dashboard is a static site; without this, the only way to call a model would
+ * be to ship a key in public JavaScript, where anyone can copy it — and Ollama
+ * refuses browser calls from other sites outright (its CORS preflight returns
+ * 405), so for Ollama there is no browser path at all.
  *
  * It does as little as possible and refuses everything else:
- *   - one route, POST /generate, from allowed origins only;
+ *   - two routes from allowed origins only: POST /generate (Gemini) and
+ *     POST /ollama/chat (Ollama Cloud);
  *   - bounded request size and output length;
  *   - JSON output under the caller's schema, never free text;
  *   - retries a busy model with backoff, then falls back to the next, and
@@ -16,7 +19,8 @@
  * checks the model's answer against them (frontend/src/assistant/).
  *
  * Secrets / vars (wrangler.toml, `wrangler secret put GEMINI_API_KEY`):
- *   GEMINI_API_KEY   required
+ *   OLLAMA_API_KEY   enables /ollama/chat
+ *   GEMINI_API_KEY   enables /generate
  *   ALLOWED_ORIGINS  comma-separated; defaults to the production site
  */
 
@@ -35,6 +39,16 @@ export const MODELS = [
   "gemini-3.5-flash-lite",
   "gemini-flash-lite-latest",
 ];
+
+const OLLAMA = "https://ollama.com/api/chat";
+
+/**
+ * Ollama Cloud models usable on the free plan, best first. Measured
+ * 2026-10-23: gpt-oss:120b answered in ~1.5 s and calls tools; DeepSeek,
+ * Kimi, GLM and MiniMax returned 402 "not in the Free plan". None enforced a
+ * JSON schema, so the dashboard checks the shape of every reply itself.
+ */
+export const OLLAMA_MODELS = ["gpt-oss:120b", "gemma4:31b", "gpt-oss:20b"];
 
 const DEFAULT_ORIGINS = "https://jaystark16.github.io";
 const MAX_BODY_BYTES = 256 * 1024;
@@ -56,8 +70,53 @@ export const RETRY_DELAYS_MS = [3_000, 8_000];
  */
 const BUSY = new Set([503]);
 
-/** Statuses that mean "try the next model", not "the request is wrong". */
-const RETRYABLE = new Set([404, 408, 429, 500, 502, 503, 504]);
+/**
+ * Statuses that mean "try the next model", not "the request is wrong". 402 is
+ * Ollama's "not in your plan", which another model on the list may be.
+ */
+const RETRYABLE = new Set([402, 404, 408, 429, 500, 502, 503, 504]);
+
+const MAX_MESSAGES = 60;
+const OLLAMA_ROLES = new Set(["system", "user", "assistant", "tool"]);
+
+function validateOllama(body) {
+  if (!body || typeof body !== "object") return "body must be a JSON object";
+  if (!Array.isArray(body.messages) || body.messages.length === 0) return "messages is required";
+  if (body.messages.length > MAX_MESSAGES) return "too many messages";
+  for (const m of body.messages) {
+    if (!m || !OLLAMA_ROLES.has(m.role)) return "each message needs a role of system, user, assistant or tool";
+  }
+  if (body.tools !== undefined && (!Array.isArray(body.tools) || body.tools.length > MAX_TOOLS)) {
+    return "tools must be an array of at most " + MAX_TOOLS;
+  }
+  if (body.models !== undefined) {
+    if (!Array.isArray(body.models) || body.models.length === 0) return "models must be a non-empty array";
+    if (body.models.some((m) => !OLLAMA_MODELS.includes(m))) return "models must be from the allowed list";
+  }
+  return null;
+}
+
+async function callOllama(model, body, key, fetchImpl) {
+  const response = await fetchImpl(OLLAMA, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    signal: AbortSignal.timeout(MODEL_TIMEOUT_MS),
+    body: JSON.stringify({
+      model,
+      messages: body.messages,
+      ...(body.tools?.length ? { tools: body.tools } : {}),
+      stream: false,
+      options: { temperature: 0.2 },
+    }),
+  });
+  if (!response.ok) return { ok: false, status: response.status };
+  const data = await response.json();
+  const message = data?.message;
+  if (!message || (!message.content && !message.tool_calls?.length)) {
+    return { ok: false, status: 502, reason: "empty response" };
+  }
+  return { ok: true, message };
+}
 
 function allowedOrigins(env) {
   return (env.ALLOWED_ORIGINS || DEFAULT_ORIGINS)
@@ -163,13 +222,18 @@ export async function handle(request, env, fetchImpl = fetch, sleep = defaultSle
       : new Response(null, { status: 403 });
   }
   if (url.pathname === "/health" && request.method === "GET") {
-    return json({ ok: true, configured: Boolean(env.GEMINI_API_KEY) }, 200, allowed);
+    return json(
+      { ok: true, gemini: Boolean(env.GEMINI_API_KEY), ollama: Boolean(env.OLLAMA_API_KEY) },
+      200,
+      allowed,
+    );
   }
-  if (url.pathname !== "/generate" || request.method !== "POST") {
-    return json({ error: "not found" }, 404, allowed);
-  }
+  const route =
+    url.pathname === "/generate" ? "gemini" : url.pathname === "/ollama/chat" ? "ollama" : null;
+  if (!route || request.method !== "POST") return json({ error: "not found" }, 404, allowed);
   if (!allowed) return json({ error: "origin not allowed" }, 403, null);
-  if (!env.GEMINI_API_KEY) return json({ error: "assistant not configured" }, 503, allowed);
+  const key = route === "gemini" ? env.GEMINI_API_KEY : env.OLLAMA_API_KEY;
+  if (!key) return json({ error: `${route} is not configured` }, 503, allowed);
 
   const raw = await request.text();
   if (raw.length > MAX_BODY_BYTES) return json({ error: "request too large" }, 413, allowed);
@@ -179,33 +243,39 @@ export async function handle(request, env, fetchImpl = fetch, sleep = defaultSle
   } catch {
     return json({ error: "body is not JSON" }, 400, allowed);
   }
-  const invalid = validate(body);
+  const invalid = route === "gemini" ? validate(body) : validateOllama(body);
   if (invalid) return json({ error: invalid }, 400, allowed);
 
   const tried = [];
   // A tool conversation pins one model; otherwise try the allowed list.
-  const candidates = body.models ?? MODELS;
+  const candidates = body.models ?? (route === "gemini" ? MODELS : OLLAMA_MODELS);
   models: for (const model of candidates) {
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
       if (attempt > 0) await sleep(RETRY_DELAYS_MS[attempt - 1]);
       let result;
       const started = Date.now();
       try {
-        result = await callModel(model, body, env.GEMINI_API_KEY, fetchImpl);
+        result =
+          route === "gemini"
+            ? await callModel(model, body, key, fetchImpl)
+            : await callOllama(model, body, key, fetchImpl);
       } catch (cause) {
         // Timeout or network failure: worth trying the next model.
         tried.push({ model, status: cause?.name === "TimeoutError" ? 408 : 502, ms: Date.now() - started });
         continue models;
       }
       if (result.ok) {
+        const ms = Date.now() - started;
         return json(
-          { model, text: result.text, content: result.content, usage: result.usage, ms: Date.now() - started, tried },
+          route === "gemini"
+            ? { model, text: result.text, content: result.content, usage: result.usage, ms, tried }
+            : { model, message: result.message, ms, tried },
           200,
           allowed,
         );
       }
       tried.push({ model, status: result.status, reason: result.reason, ms: Date.now() - started });
-      // A request Google rejects as malformed will be rejected by every model.
+      // A request the provider rejects as malformed will be rejected by every model.
       if (!RETRYABLE.has(result.status)) break models;
       // Overloaded: wait and ask the same model again. Rate-limited, gone or erroring: move on.
       if (!BUSY.has(result.status)) continue models;
