@@ -58,6 +58,8 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: proxy
+          # The action's default (3.x) is out of date and warns on every run.
+          wranglerVersion: "4"
 
       # Uploaded one by one, and only when present: an empty secret would
       # switch a route on with no key behind it.
