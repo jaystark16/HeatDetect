@@ -63,18 +63,17 @@ Check this before claiming anything works.
 | Dashboard (GitHub Pages) | ✅ Live, rebuilt from FIRMS every 3 hours |
 | Data refresh in CI | ✅ `FIRMS_MAP_KEY` secret is set, so each run backfills 60 days |
 | Backend API (Render) | ❌ Not deployed. No `API_BASE_URL` variable, so the site serves the committed snapshot |
-| Assistant proxy (Cloudflare) | Built and tested locally with Ollama and Gemini (2026-10-23). **Not deployed:** needs the owner's `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`. Ollama has no browser path, so it works only through this proxy |
+| Assistant proxy (Cloudflare) | ✅ Deployed 2026-10-23 at `https://heatdetect-assistant.jay16marvel-708.workers.dev`. `/health` returned `ollama: true, gemini: false`; a live `/ollama/chat` call answered with gpt-oss:120b. The site does not use it until `ASSISTANT_URL` is set |
 | Gemini on the public site | Needs the `GEMINI_API_KEY` secret, which the owner sets. Without it the Ask tab answers from keywords only. With it, Gemini researches any question over all locations (tools, conversation memory) — verified locally 2026-10-09 |
 
-Configured: secrets `FIRMS_MAP_KEY`, `OLLAMA_API_KEY` (2026-10-23). **No repository variables at all.**
+Configured: secrets `FIRMS_MAP_KEY`, `OLLAMA_API_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID` (2026-10-23). **No repository variables at all.**
 
 ## In progress / next
 
 See `ROADMAP.md` for the full list. Most pressing:
 
-1. Turn on the assistant for the public site: the owner creates a free Cloudflare account,
-   adds `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, runs **Deploy assistant proxy**,
-   then sets `ASSISTANT_URL` and re-runs the Pages deploy (`proxy/README.md`).
+1. Turn on the assistant for the public site: set the repository variable `ASSISTANT_URL`
+   to the Worker URL above and re-run the Pages deploy (`proxy/README.md`).
 2. Decide whether to host the backend on Render (`render.yaml` is ready) or keep the
    static snapshot for the demo.
 3. Fill the plan PDF's Phase 8 gaps: alert panel and CSV/GeoJSON/report export.

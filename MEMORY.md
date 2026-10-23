@@ -8,8 +8,11 @@ and debugging discoveries. Don't repeat what git history or the code already say
 - **Ollama Cloud added; it answers first.** Free plan: gpt-oss:120b, gemma4:31b,
   gpt-oss:20b; other big models return 402. Ollama has no browser path (CORS preflight
   405), so it needs the proxy, and the owner chose to create the Cloudflare account.
-  `OLLAMA_API_KEY` is set as a GitHub secret; `CLOUDFLARE_API_TOKEN` and
-  `CLOUDFLARE_ACCOUNT_ID` are still needed from the owner.
+  `OLLAMA_API_KEY`, `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are GitHub secrets.
+- **A new Cloudflare account cannot deploy a Worker until it has a workers.dev
+  subdomain.** The first deploy uploaded the script and then failed; registering the
+  subdomain once in the dashboard fixed it. The new URL then failed TLS for about a
+  minute while its certificate was issued.
 - **No Ollama model enforces a JSON schema.** `format` and `response_format` were both
   ignored; replies came back as prose, fenced JSON, or `{"answer": 15}`. The shape is now
   checked on arrival with one retry.
