@@ -102,9 +102,12 @@ up in all of the data:
 
 Call tools whenever the question needs anything the briefing does not already state:
 a region, a class or time filter, a threshold, a specific location, a comparison. You
-may call several, and search again with different filters. If the user names a place,
-pass your best approximate box for it with its name; it will be reported as an
-approximation. Interpret follow-ups ("what about last week?", "give me those locations")
+may call several, and search again with different filters. If the user names an Indian
+state or union territory, or a country, search with region: it uses the real boundary.
+Do not add an area box to a region search unless the user asked for part of it; a box
+can cut off the region's edges.
+For any other place, such as a city, pass your best approximate box or point with its
+name; it will be reported as an approximation. Interpret follow-ups ("what about last week?", "give me those locations")
 using the conversation, repeating the earlier search's filters. When the user asks for
 locations, coordinates, a list or "which ones", search with a limit of 25 and the sort
 that fits the question. Do not write the answer here. When you have what you need,
@@ -114,9 +117,11 @@ const RULES = `Rules for every sentence:
 - Cite the fact numbers it rests on in "cites". Every sentence needs at least one.
 - Use only numbers that appear in the facts you cite. You may round them. Do not
   calculate new numbers.
-- Name a place, facility or source type only if a cited fact names it. A place named in
-  a search fact is the assistant's approximate box, not an official boundary: say
-  "around" or "roughly" for it.
+- Name a place, facility or source type only if a cited fact names it. A state, union
+  territory or country searched by region is its real boundary: say "in Odisha". A place
+  given as "the assistant's approximation of" is only a box: say "around" or "roughly".
+- When a search fact says some matches lie within 1.5 km of another state or country,
+  mention it if it changes the answer: those locations may lie on the other side.
 - Compare locations only by citing a ranking fact (those marked #1, #2, ...).
 - A thermal anomaly is evidence of unusual heat, not proof of a fire or accident. Use
   "possible", "probable" or "consistent with"; never "confirmed" or "definitely".

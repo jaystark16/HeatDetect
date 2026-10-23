@@ -16,7 +16,7 @@ from `backend/`). Response models are in `app/schemas.py`, mirrored by
 | `GET /api/runs` | Ingest-run audit log | `limit` 1–200 |
 | `GET /api/hotspots` | Detections with filters | `min_frp_mw`, `within_hours` (≤30 d), `min_distinct_days`, `confidence_tier`, `bbox`, `limit` ≤5000, `offset` |
 | `GET /api/hotspots/{detection_id}` | Full detail: observation, history stats, context, classification, evidence | 404 if unknown |
-| `GET /api/locations` | One row per ~1 km cell (what the map draws) | `min_frp_mw`, `min_distinct_days`, `within_hours`, `bbox`, `limit` ≤20000 |
+| `GET /api/locations` | One row per ~1 km cell (what the map draws), with `region`, `country` and `region_alternatives` | `min_frp_mw`, `min_distinct_days`, `within_hours`, `bbox`, `limit` ≤20000 |
 | `GET /api/search` | Coordinates or a facility name | `q` (1–120 chars), `limit` ≤25 |
 | `GET /api/analytics` | Dashboard totals | — |
 | `GET /api/rules` | The label thresholds in force | — |

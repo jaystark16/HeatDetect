@@ -105,6 +105,11 @@ def _context_from_row(row: Any) -> CellContextRow:
         facilities_within_5km=row.facilities_within_5km,
         land_cover=row.land_cover,
         context_coverage=row.context_coverage,  # type: ignore[arg-type]
+        region=row.region,
+        region_country=row.region_country,
+        region_alternatives=tuple(row.region_alternatives or ()),
+        # Stored as a list whenever computed, so NULL means never computed.
+        region_assessed=row.region_alternatives is not None,
     )
 
 
@@ -419,6 +424,8 @@ def list_locations(engine: Engine, filters: LocationFilters) -> LocationCollecti
         cell_stats.join(cell_labels, cell_stats.c.cell_id == cell_labels.c.cell_id)
         .join(rep, cell_stats.c.cell_id == rep.c.cell_id)
         .join(peak, cell_stats.c.cell_id == peak.c.cell_id)
+        # Outer: a location without context still exists; its region is unknown.
+        .outerjoin(cell_context, cell_stats.c.cell_id == cell_context.c.cell_id)
     )
 
     clauses = []
@@ -461,6 +468,9 @@ def list_locations(engine: Engine, filters: LocationFilters) -> LocationCollecti
             cell_stats.c.median_frp_mw,
             cell_stats.c.last_seen,
             rep.c.detection_id,
+            cell_context.c.region,
+            cell_context.c.region_country,
+            cell_context.c.region_alternatives,
         ).select_from(base)
         if where is not None:
             stmt = stmt.where(where)
@@ -485,6 +495,9 @@ def list_locations(engine: Engine, filters: LocationFilters) -> LocationCollecti
             median_frp_mw=round(r.median_frp_mw, 2),
             last_seen=_utc(r.last_seen),
             representative_detection_id=r.detection_id,
+            region=r.region,
+            country=r.region_country,
+            region_alternatives=list(r.region_alternatives or []),
         )
         for r in rows
     ]

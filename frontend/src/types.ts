@@ -184,6 +184,13 @@ export interface LocationSummary {
   last_seen: string;
   /** Highest-FRP detection here; what the detail panel opens. */
   representative_detection_id: string;
+  /** Indian state or union territory (India's official map); null outside
+   * India or offshore. Absent from snapshots built before regions existed. */
+  region?: string | null;
+  /** Null when outside every boundary in the data. */
+  country?: string | null;
+  /** Other states or countries within 1.5 km; the location may lie in one. */
+  region_alternatives?: string[];
 }
 
 export interface LocationCollection {
@@ -213,6 +220,10 @@ export interface MapMark {
   /** Satellite passes that detected heat here, over the whole window. */
   observation_count: number;
   last_seen: string;
+  /** Null when not known: outside India, offshore, or an older snapshot. */
+  region: string | null;
+  country: string | null;
+  region_alternatives: string[];
 }
 
 export interface SearchMatch {

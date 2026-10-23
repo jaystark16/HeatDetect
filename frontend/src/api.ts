@@ -137,6 +137,9 @@ export function locationToMark(location: LocationSummary): MapMark {
     frp_mw: location.max_frp_mw,
     observation_count: location.observation_count,
     last_seen: location.last_seen,
+    region: location.region ?? null,
+    country: location.country ?? null,
+    region_alternatives: location.region_alternatives ?? [],
   };
 }
 

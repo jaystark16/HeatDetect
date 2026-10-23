@@ -19,7 +19,7 @@ import * as llm from "../assistant/llm";
 import { answerLocations } from "../assistant/locations";
 import { verifyWording, type CitedVerdict } from "../assistant/verify";
 import { CLASS_STYLES } from "../classes";
-import { plainCoordinates } from "../maps";
+import { placeLabel, plainCoordinates } from "../maps";
 import type { MapMark } from "../types";
 import MapsLink from "./MapsLink";
 
@@ -462,8 +462,9 @@ function Locations({
             <span className="turn__line">
               <span className="turn__coords">{plainCoordinates(m.latitude, m.longitude)}</span>
               {" · "}
-              {CLASS_STYLES[m.label].shortLabel} · {m.distinct_days} {m.distinct_days === 1 ? "day" : "days"} ·
-              peak {m.frp_mw.toFixed(1)} MW
+              {CLASS_STYLES[m.label].shortLabel}
+              {placeLabel(m) ? ` · ${placeLabel(m)}` : ""} · {m.distinct_days}{" "}
+              {m.distinct_days === 1 ? "day" : "days"} · peak {m.frp_mw.toFixed(1)} MW
             </span>
             <span className="turn__actions">
               <button type="button" className="turn__show" onClick={() => onShow(m)}>

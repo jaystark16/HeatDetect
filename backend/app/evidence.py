@@ -174,6 +174,48 @@ def build_evidence(
             )
         )
 
+    # --- Administrative region ------------------------------------------
+    # Nothing is said when the region was never computed: silence there is
+    # honest, "outside every boundary" would not be.
+    nearby = ", ".join(context.region_alternatives)
+    if context.region_assessed and context.region_country is None:
+        items.append(
+            EvidenceItem(
+                statement=(
+                    "This location lies outside every state and country boundary in "
+                    "the data, for example offshore"
+                    + (f"; {nearby} lies within 1.5 km." if nearby else ".")
+                ),
+                kind="absent",
+                values={"region_alternatives": list(context.region_alternatives)},
+            )
+        )
+    elif context.region_assessed:
+        where = f"{context.region}, {context.region_country}" if context.region else context.region_country
+        items.append(
+            EvidenceItem(
+                statement=(
+                    f"Lies in {where} by the boundary data"
+                    + (" (India's official map)." if context.region_country == "India" else ".")
+                    + (
+                        f" It is within 1.5 km of {nearby}, closer than these boundaries "
+                        f"are accurate, so it may lie there instead."
+                        if nearby
+                        else ""
+                    )
+                ),
+                kind="derived",
+                values={
+                    "region": context.region,
+                    "country": context.region_country,
+                    "region_alternatives": list(context.region_alternatives),
+                },
+                dataset_id=(
+                    "boundaries_india_states" if context.region_country == "India" else "boundaries_neighbour_countries"
+                ),
+            )
+        )
+
     # --- Thermal character ------------------------------------------------
     items.append(
         EvidenceItem(

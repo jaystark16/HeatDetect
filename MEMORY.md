@@ -5,6 +5,24 @@ and debugging discoveries. Don't repeat what git history or the code already say
 
 ## 2026-10-23
 
+- **States are searched by their real boundary, not a box the model guesses.** The
+  model's "Odisha" box returned 66 persistent sources; by boundary there are 36. The
+  other 30 were in Chhattisgarh (16), West Bengal (7), Jharkhand (5) and Andhra Pradesh (2).
+- **Boundary source choice.** The owner chose India's official map for disputed areas.
+  Natural Earth draws Kashmir along the line of control and put Puducherry town in Tamil
+  Nadu, so India comes from datta07/INDIAN-SHAPEFILES (MIT; it draws India's official
+  boundary, but its upstream source is unnamed). Natural Earth is used for neighbouring
+  countries only: its provinces there are stale (Nepal's 14 zones, Pakistan's FATA,
+  7 Bangladesh divisions). geoBoundaries was ruled out because it replaces disputed areas
+  with US State Department lines.
+- **How it was checked.** Reference places, including Gilgit, Muzaffarabad and Aksai Chin
+  under India's view, were all right. Natural Earth's India agreed on 98.4% of Indian
+  locations. Of the 43 disagreements more than 1.5 km from a boundary, OpenStreetMap
+  (Nominatim) sided with our file in 42; the one miss is Assam vs West Bengal near Dhubri.
+  76 locations fall in no region; the ones checked are offshore (Bombay High, Gulf of Kutch).
+- **Older databases gain the new columns in place.** `init_schema` adds missing nullable
+  columns, so a database from before regions does not fail on the new query.
+
 - **"Give me those locations" got a count and no locations.** Brief mode allows one to
   three sentences and no lists, and the location list showed only locations a sentence
   cited; the answer cited the search total. A cited search total now lists that search's

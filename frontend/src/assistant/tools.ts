@@ -8,10 +8,12 @@
  * as numbered facts that Gemini must cite, exactly like the briefing's, so the
  * citation check (verify.ts) covers looked-up answers too.
  *
- * Gemini may name a place and give its own approximate box for it ("Gujarat").
- * The box is a guess from general knowledge, not data, and every fact built
- * from it says so; the place name then appears in a cited fact only alongside
- * that disclaimer.
+ * A state, union territory or country is searched by its real boundary
+ * (`region`): each location carries the region the backend assigned from
+ * India's official map. For anything else, a city or an area, the model may
+ * name a place and give its own approximate box for it. The box is a guess from
+ * general knowledge, not data, and every fact built from it says so; the place
+ * name then appears in a cited fact only alongside that disclaimer.
  */
 
 import type { HotspotDetail, MapMark, ThermalClass } from "../types";
@@ -48,6 +50,60 @@ const NOUN: Record<ThermalClass, [string, string]> = {
   natural_fire: ["probable vegetation fire", "probable vegetation fires"],
   unknown: ["unclassified location", "unclassified locations"],
 };
+
+/**
+ * India's 28 states and 8 union territories, spelt as in
+ * backend/data/boundaries/india_states.geojson (tools.test.ts checks this). Kept
+ * here, not read from the locations, so a state with no detections answers
+ * "0 matches" instead of "unknown region".
+ */
+export const INDIAN_REGIONS = [
+  "Andaman and Nicobar Islands", "Andhra Pradesh", "Arunachal Pradesh", "Assam", "Bihar",
+  "Chandigarh", "Chhattisgarh", "Dadra and Nagar Haveli and Daman and Diu", "Delhi", "Goa",
+  "Gujarat", "Haryana", "Himachal Pradesh", "Jammu and Kashmir", "Jharkhand", "Karnataka",
+  "Kerala", "Ladakh", "Lakshadweep", "Madhya Pradesh", "Maharashtra", "Manipur", "Meghalaya",
+  "Mizoram", "Nagaland", "Odisha", "Puducherry", "Punjab", "Rajasthan", "Sikkim", "Tamil Nadu",
+  "Telangana", "Tripura", "Uttar Pradesh", "Uttarakhand", "West Bengal",
+];
+
+const regionKey = (name: string) => name.toLowerCase().replace(/&/g, "and").replace(/[^a-z]/g, "");
+
+/** Spellings in common use that the boundary data does not use. */
+const REGION_ALIASES: Record<string, string> = {
+  orissa: "Odisha",
+  pondicherry: "Puducherry",
+  uttaranchal: "Uttarakhand",
+  jk: "Jammu and Kashmir",
+  jandk: "Jammu and Kashmir",
+  andamanandnicobar: "Andaman and Nicobar Islands",
+  andamans: "Andaman and Nicobar Islands",
+  dadraandnagarhaveli: "Dadra and Nagar Haveli and Daman and Diu",
+  damananddiu: "Dadra and Nagar Haveli and Daman and Diu",
+  nctofdelhi: "Delhi",
+  burma: "Myanmar",
+};
+
+/** The canonical region or country for what the model passed, or null. */
+export function matchRegion(input: string, marks: MapMark[]): { name: string; country: boolean } | null {
+  const key = regionKey(input);
+  if (!key) return null;
+  const indian = INDIAN_REGIONS.find((r) => regionKey(r) === key);
+  if (indian) return { name: indian, country: false };
+  const countries = new Set(["India", ...marks.map((m) => m.country).filter((c): c is string => Boolean(c))]);
+  const country = [...countries].find((c) => regionKey(c) === key);
+  if (country) return { name: country, country: true };
+  const alias = REGION_ALIASES[key];
+  if (alias) return INDIAN_REGIONS.includes(alias) ? { name: alias, country: false } : { name: alias, country: true };
+  return null;
+}
+
+/** Where a location lies, as the backend assigned it from the boundary data. */
+function placeOf(m: MapMark): string {
+  if (!m.country) return "";
+  const where = m.region ? `${m.region}, ${m.country}` : m.country;
+  const near = m.region_alternatives.length ? ` (within 1.5 km of ${m.region_alternatives.join(" and ")})` : "";
+  return ` in ${where}${near}`;
+}
 
 const AREA = {
   type: "OBJECT",
@@ -98,6 +154,11 @@ export const TOOL_DECLARATIONS = [
         max_distinct_days: { type: "INTEGER" },
         min_peak_frp_mw: { type: "NUMBER" },
         seen_within_hours: { type: "INTEGER", description: "Only locations last seen within this many hours" },
+        region: {
+          type: "STRING",
+          description:
+            "An Indian state or union territory (e.g. 'Odisha', 'Ladakh'), or a country (e.g. 'Nepal', 'India'). Searched by its real boundary, India's official map. Use this, not area, whenever the user names a state, union territory or country.",
+        },
         area: AREA,
         near: NEAR,
         sort_by: { type: "STRING", enum: ["distinct_days", "peak_frp", "last_seen", "passes"] },
@@ -124,7 +185,7 @@ function describe(m: MapMark, now: number, extra = ""): string {
   const seen = Date.parse(m.last_seen);
   const ago = Number.isFinite(seen) ? `${age(Math.max(0, (now - seen) / HOUR_MS))} ago` : "at an unknown time";
   return (
-    `${coordinates(m.latitude, m.longitude)}: ${NOUN[m.label][0]}; seen on ${m.distinct_days} distinct ` +
+    `${coordinates(m.latitude, m.longitude)}: ${NOUN[m.label][0]}${placeOf(m)}; seen on ${m.distinct_days} distinct ` +
     `${m.distinct_days === 1 ? "day" : "days"}; peak fire radiative power ${m.frp_mw.toFixed(1)} MW; ` +
     `${m.observation_count} satellite ${m.observation_count === 1 ? "pass" : "passes"}; last seen ${ago}${extra}.`
   );
@@ -158,6 +219,14 @@ function areaText(a: Area): string {
     : `the box ${box}`;
 }
 
+function boundaryNote(uncertain: number, edge: number, name: string): string {
+  const parts = [
+    uncertain ? `${uncertain.toLocaleString()} of them ${uncertain === 1 ? "lies" : "lie"} within 1.5 km of another state or country` : "",
+    edge ? `${edge.toLocaleString()} more just outside ${edge === 1 ? "lies" : "lie"} within 1.5 km of ${name}` : "",
+  ].filter(Boolean);
+  return parts.length ? ` ${parts.join("; ")}, closer than the boundaries are accurate.` : "";
+}
+
 function invalid(error: string): ToolRun {
   return { name: "search_locations", summary: `Rejected a search: ${error}`, facts: [], error };
 }
@@ -172,6 +241,12 @@ function searchLocations(args: Record<string, unknown>, ctx: AskContext): ToolRu
   }
   if (args.sort_by !== undefined && !SORTS.includes(String(args.sort_by))) {
     return invalid(`sort_by must be one of ${SORTS.join(", ")}; got "${String(args.sort_by)}"`);
+  }
+  const region = args.region !== undefined ? matchRegion(String(args.region), ctx.marks) : null;
+  if (args.region !== undefined && !region) {
+    return invalid(
+      `region must be an Indian state or union territory (${INDIAN_REGIONS.join(", ")}) or a country in the data; got "${String(args.region)}". For a city or an area, use area or near instead.`,
+    );
   }
   if (args.area !== undefined && readArea(args.area) === null) {
     return invalid("area needs numbers south < north and west < east, within -90..90 latitude");
@@ -213,6 +288,14 @@ function searchLocations(args: Record<string, unknown>, ctx: AskContext): ToolRu
     );
   }
   if (near) rows = rows.filter((r) => r.km <= near.km);
+  // Locations just outside the region but within 1.5 km of it: the boundary
+  // is not accurate enough at that distance to rule them out.
+  let edge = 0;
+  if (region) {
+    const inside = (m: MapMark) => (region.country ? m.country === region.name : m.region === region.name);
+    edge = rows.filter((r) => !inside(r.m) && r.m.region_alternatives.includes(region.name)).length;
+    rows = rows.filter((r) => inside(r.m));
+  }
 
   const criteria = [
     cls ? NOUN[cls][1] : "locations of any class",
@@ -220,6 +303,9 @@ function searchLocations(args: Record<string, unknown>, ctx: AskContext): ToolRu
     maxDays !== undefined ? `seen on at most ${maxDays} distinct days` : "",
     minFrp !== undefined ? `peak fire radiative power at least ${minFrp} MW` : "",
     within !== undefined ? `last seen within ${within} hours` : "",
+    region
+      ? `in ${region.name} (${region.country ? "country boundary" : "state or union territory boundary, India's official map"})`
+      : "",
     area ? `inside ${areaText(area)}` : "",
     near
       ? `within ${near.km} km of ${coordinates(near.lat, near.lon)}` +
@@ -240,7 +326,8 @@ function searchLocations(args: Record<string, unknown>, ctx: AskContext): ToolRu
       text:
         `Search of all ${ctx.marks.length.toLocaleString()} locations for ${criteria}: ` +
         `${rows.length.toLocaleString()} ${rows.length === 1 ? "match" : "matches"}` +
-        (rows.length ? ` (${breakdown}).` : "."),
+        (rows.length ? ` (${breakdown}).` : ".") +
+        (region ? boundaryNote(rows.filter((r) => r.m.region_alternatives.length).length, edge, region.name) : ""),
     },
   ];
 

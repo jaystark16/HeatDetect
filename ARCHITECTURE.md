@@ -8,13 +8,14 @@ the decisions behind it.
 ```
 NASA FIRMS regional archives (open, no key)  ─┐
 NASA FIRMS /api/area (keyed, backfill only)   │
-OpenStreetMap via Overpass (cached, committed)┴─► SQLite / Postgres
+OpenStreetMap via Overpass (cached, committed)│
+State + country boundaries (committed files) ┴─► SQLite / Postgres
                                                       │
           observed  detections, facilities, land_parcels
           derived   cell_stats, cell_context, cell_labels
           audit     ingest_runs
                                                       ▼
-                            deterministic features (persistence, context)
+                  deterministic features (persistence, context, region)
                                                       │
                      ┌────────────────────────────────┴───────────┐
                      ▼                                            ▼
@@ -38,6 +39,17 @@ an inference by accident.
   per-location detail files that `scripts/export_snapshot.py` writes during each Pages
   build. With no API configured, the static build makes no `/api/*` requests.
 
+## Regions (state / country)
+
+`app/regions.py` assigns each location's state or union territory (India's official map,
+from `backend/data/boundaries/india_states.geojson`), or its country outside India
+(Natural Earth; its provinces here are out of date, so only the country is kept). India
+is tested first, so the disputed areas follow India's map. A location within 1.5 km of
+another region carries it as an alternative instead of being given one side silently.
+Stored in `cell_context`; regions never affect classification. The Ask tab's
+`search_locations` filters by `region` exactly, so "in Odisha" is Odisha's boundary
+rather than a box the model guessed.
+
 ## Classification authority
 
 1. No surveyed industrial context → `not_surveyed`, never classified.
@@ -55,8 +67,9 @@ question + conversation so far + briefing.ts (~75 numbered computed facts)
    │
    ▼  1. research (gemini.ts askAgent): Gemini calls tools (tools.ts) as needed
       search_locations  — every location, by class, days seen, peak FRP, recency,
-                          an area box (a named place = Gemini's approximate box,
-                          labelled as such) or a point and radius
+                          a state or country by its real boundary (region), an area
+                          box (a named place = the model's approximate box, labelled
+                          as such) or a point and radius
       location_detail   — the full evidence for the location nearest a point
       code runs each over all loaded locations → more numbered facts
    ▼  2. answer: Gemini writes a natural reply from all the facts, citing them

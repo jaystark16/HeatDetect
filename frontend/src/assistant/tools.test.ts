@@ -13,7 +13,7 @@ import { locationToMark } from "../api";
 import type { Analytics, HotspotDetail, LocationSummary, MapMark, ModelInfo } from "../types";
 import { haversineKm, type AskContext } from "./intents";
 import { answerLocations } from "./locations";
-import { runTool, TOOL_DECLARATIONS } from "./tools";
+import { INDIAN_REGIONS, matchRegion, runTool, TOOL_DECLARATIONS } from "./tools";
 import { verifyCited } from "./verify";
 
 const snapshot = JSON.parse(
@@ -291,5 +291,69 @@ describe("locations listed under an answer", () => {
     const list = answerLocations(facts, [2]);
     expect(list.marks.map((m) => m.id)).toEqual([run.facts[1].mark!.id]);
     expect(list.heading).toBeNull();
+  });
+});
+
+describe("searching a state or country by its real boundary", () => {
+  const boundaries = JSON.parse(
+    readFileSync(fileURLToPath(new URL("../../../backend/data/boundaries/india_states.geojson", import.meta.url)), "utf-8"),
+  ) as { features: { properties: { name: string } }[] };
+
+  it("knows exactly the 36 states and union territories in the boundary data", () => {
+    expect([...INDIAN_REGIONS].sort()).toEqual(boundaries.features.map((f) => f.properties.name).sort());
+  });
+
+  it("counts a state exactly, from the region each location carries", async () => {
+    const run = await runTool("search_locations", { class: "persistent_industrial", region: "Odisha" }, ctx);
+    const inside = marks.filter((m) => m.label === "persistent_industrial" && m.region === "Odisha");
+    expect(inside.length).toBeGreaterThan(0);
+    expect(run.error).toBeUndefined();
+    expect(run.facts[0].text).toContain("in Odisha (state or union territory boundary, India's official map)");
+    expect(run.facts[0].text).toContain(`: ${inside.length} match`);
+    expect(run.facts[1].text).toContain("in Odisha, India");
+  });
+
+  it("reports locations too close to the boundary to be sure of", async () => {
+    const run = await runTool("search_locations", { region: "Punjab" }, ctx);
+    const uncertain = marks.filter((m) => m.region === "Punjab" && m.region_alternatives.length).length;
+    const edge = marks.filter((m) => m.region !== "Punjab" && m.region_alternatives.includes("Punjab")).length;
+    expect(uncertain + edge).toBeGreaterThan(0);
+    if (uncertain) expect(run.facts[0].text).toContain(`${uncertain.toLocaleString()} of them`);
+    if (edge) expect(run.facts[0].text).toContain(`${edge.toLocaleString()} more just outside`);
+  });
+
+  it("accepts common spellings and countries", () => {
+    expect(matchRegion("Orissa", marks)).toEqual({ name: "Odisha", country: false });
+    expect(matchRegion("pondicherry", marks)).toEqual({ name: "Puducherry", country: false });
+    expect(matchRegion("J&K", marks)).toEqual({ name: "Jammu and Kashmir", country: false });
+    expect(matchRegion("Daman & Diu", marks)?.name).toBe("Dadra and Nagar Haveli and Daman and Diu");
+    expect(matchRegion("nepal", marks)).toEqual({ name: "Nepal", country: true });
+    expect(matchRegion("India", marks)).toEqual({ name: "India", country: true });
+  });
+
+  it("answers 0 for a state with no detections instead of calling it unknown", async () => {
+    const run = await runTool("search_locations", { region: "Lakshadweep" }, ctx);
+    expect(run.error).toBeUndefined();
+    expect(run.facts[0].text).toContain(
+      `: ${marks.filter((m) => m.region === "Lakshadweep").length} match`,
+    );
+  });
+
+  it("refuses a city as a region and says what to use instead", async () => {
+    const run = await runTool("search_locations", { region: "Vizag" }, ctx);
+    expect(run.error).toContain("use area or near instead");
+  });
+
+  it("counts a country, India included", async () => {
+    const run = await runTool("search_locations", { region: "India" }, ctx);
+    expect(run.facts[0].text).toContain(`: ${marks.filter((m) => m.country === "India").length.toLocaleString()} match`);
+  });
+
+  it("lets the answer say 'in Odisha' from the search fact", async () => {
+    const run = await runTool("search_locations", { class: "persistent_industrial", region: "Odisha" }, ctx);
+    const facts = run.facts.map((f, i) => ({ id: i + 1, text: f.text, section: `lookup: ${run.summary}` }));
+    const n = run.facts[0].text.match(/: ([\d,]+) match/)![1];
+    const v = verifyCited({ text: `There are ${n} persistent industrial sources in Odisha. [1]`, cites: [1] }, facts, "odisha?");
+    expect(v.reason).toBeUndefined();
   });
 });

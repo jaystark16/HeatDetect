@@ -225,6 +225,57 @@ PERSISTENCE_DERIVED = Dataset(
     ),
 )
 
+BOUNDARIES_INDIA = Dataset(
+    id="boundaries_india_states",
+    name="India state and union territory boundaries (India's official map)",
+    provider="github.com/datta07/INDIAN-SHAPEFILES, INDIA/INDIA_STATES.geojson",
+    kind=DataKind.OBSERVED,
+    source_url=(
+        "https://github.com/datta07/INDIAN-SHAPEFILES/blob/"
+        "7b003e3e8c35491fadf71ced7f168f18a7423bf3/INDIA/INDIA_STATES.geojson"
+    ),
+    licence="MIT (notice in backend/data/boundaries/LICENSE-india-states.txt)",
+    update_frequency="Static; vintage about 2019, fetched 2026-10-23",
+    spatial_resolution="Vector polygons simplified with a 300 m tolerance",
+    fields=("name", "code"),
+    limitations=(
+        "The repository does not name its upstream source. It carries Census "
+        "2011 and Local Government Directory state codes, and draws India's "
+        "external boundary as India's official map does.",
+        "Dadra and Nagar Haveli and Daman and Diu were separate in the file; "
+        "they are merged here, as they have been since 26 January 2020.",
+        "Checked 2026-10-23 on 32,138 locations: Natural Earth agreed on 98.4% "
+        "of Indian locations; of 43 disagreements more than 1.5 km from a "
+        "boundary, OpenStreetMap sided with this file in 42 and against it in "
+        "one (Assam and West Bengal near Dhubri).",
+        "A location within 1.5 km of another state or country is reported with "
+        "that alternative, because the boundaries are not accurate at that "
+        "distance.",
+    ),
+)
+
+BOUNDARIES_NEIGHBOURS = Dataset(
+    id="boundaries_neighbour_countries",
+    name="Neighbouring country boundaries (Natural Earth 10m Admin 1)",
+    provider="Natural Earth",
+    kind=DataKind.OBSERVED,
+    source_url="https://www.naturalearthdata.com/downloads/10m-cultural-vectors/10m-admin-1-states-provinces/",
+    licence="Public domain",
+    update_frequency="Static; release v5.1.2, fetched 2026-10-23",
+    spatial_resolution="Vector polygons at 1:10 million scale",
+    fields=("country",),
+    limitations=(
+        "Used for the country only. Its provinces for this region are out of "
+        "date: Nepal's 14 zones (7 provinces since 2015), Pakistan's F.A.T.A. "
+        "(merged 2018), 7 Bangladesh divisions (8 since 2015).",
+        "Used only outside India's boundary, so India's official map takes "
+        "precedence where the two overlap.",
+        "Its borders and India's file do not meet exactly; a location in a gap "
+        "between them is reported as outside every boundary, with the nearby "
+        "regions as alternatives.",
+    ),
+)
+
 CATALOGUE: dict[str, Dataset] = {
     d.id: d
     for d in (
@@ -233,6 +284,8 @@ CATALOGUE: dict[str, Dataset] = {
         OSM_INDUSTRIAL,
         OSM_LANDCOVER,
         PERSISTENCE_DERIVED,
+        BOUNDARIES_INDIA,
+        BOUNDARIES_NEIGHBOURS,
     )
 }
 

@@ -238,6 +238,17 @@ class LocationSummary(BaseModel):
     representative_detection_id: str = Field(
         description="Highest-FRP detection here; what the detail panel opens"
     )
+    region: str | None = Field(
+        default=None,
+        description="Indian state or union territory (India's official map); None outside India or offshore",
+    )
+    country: str | None = Field(
+        default=None, description="None when the location lies outside every boundary in the data"
+    )
+    region_alternatives: list[str] = Field(
+        default_factory=list,
+        description="Other states or countries within 1.5 km; the location may lie in one of them",
+    )
 
 
 class LocationCollection(BaseModel):

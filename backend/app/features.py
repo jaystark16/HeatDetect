@@ -33,6 +33,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 
 from .config import CODE_VERSION, settings
+from .regions import assign_regions
 from .db import cell_context, cell_stats, detections, facilities, land_parcels
 from .geo import cell_centre, haversine_m
 from .ingest.osm import cached_tile_keys, tile_for_point
@@ -87,6 +88,14 @@ class CellContextRow:
     facilities_within_5km: int
     land_cover: str
     context_coverage: ContextCoverage
+    region: str | None = None
+    """Indian state or union territory; None outside India or offshore."""
+    region_country: str | None = None
+    region_alternatives: tuple[str, ...] = ()
+    """Other regions within regions.NEAR_BOUNDARY_M; the cell may lie in one."""
+    region_assessed: bool = False
+    """False when the region was never computed (a database from before it
+    existed), so "no region" is not mistaken for "outside every boundary"."""
 
 
 def median_absolute_deviation(values: Sequence[float]) -> float:
@@ -295,8 +304,11 @@ def compute_cell_context(engine: Engine, cells: Iterable[str]) -> list[CellConte
         len(surveyed),
     )
 
+    cells = list(cells)
+    regions = assign_regions([cell_centre(cell) for cell in cells])
+
     out: list[CellContextRow] = []
-    for cell in cells:
+    for cell, region in zip(cells, regions):
         lat, lon = cell_centre(cell)
         tile = tile_for_point(lat, lon, settings.overpass_tile_degrees)
         coverage: ContextCoverage = (
@@ -318,6 +330,10 @@ def compute_cell_context(engine: Engine, cells: Iterable[str]) -> list[CellConte
                 ),
                 land_cover=parcel[1]["land_cover"] if parcel else "unknown",
                 context_coverage=coverage,
+                region=region.region,
+                region_country=region.country,
+                region_alternatives=region.alternatives,
+                region_assessed=True,
             )
         )
     return out
@@ -365,6 +381,9 @@ def store_cell_context(engine: Engine, rows: Sequence[CellContextRow]) -> int:
             "facilities_within_5km": r.facilities_within_5km,
             "land_cover": r.land_cover,
             "context_coverage": r.context_coverage,
+            "region": r.region,
+            "region_country": r.region_country,
+            "region_alternatives": list(r.region_alternatives),
             "computed_at": now,
             "code_version": CODE_VERSION,
         }

@@ -53,6 +53,8 @@ OSM industrial + landuse (Overpass) ├─► SQLite/Postgres ─► features �
 - `app/ingest/firms.py` — FIRMS CSV client. Strict parsing, rejects counted by reason.
 - `app/ingest/osm.py` — Overpass client with a committed tile cache and backoff.
 - `app/geo.py` — pure geographic helpers (haversine, grid cells). No I/O.
+- `app/regions.py` — state / country per location from the committed boundary files
+  (India's official map); flags locations within 1.5 km of another region.
 - `app/features.py` — deterministic persistence statistics and spatial context.
 - `app/labels.py` — the rule engine. Authoritative when history exists; explicit thresholds.
 - `app/model.py` — single-observation classifier, feature schema, abstention, suppression.

@@ -7,6 +7,8 @@
  * decimals is the precision FIRMS reports, about 1 m.
  */
 
+import type { MapMark } from "./types";
+
 function valid(latitude: number, longitude: number): boolean {
   return (
     Number.isFinite(latitude) &&
@@ -14,6 +16,17 @@ function valid(latitude: number, longitude: number): boolean {
     Math.abs(latitude) <= 90 &&
     Math.abs(longitude) <= 180
   );
+}
+
+/**
+ * "Odisha", "Nepal", or "Odisha (near West Bengal)" when another region is
+ * within 1.5 km. Null when the location is outside every boundary or the data
+ * predates regions; the page then says nothing rather than guess.
+ */
+export function placeLabel(m: Pick<MapMark, "region" | "country" | "region_alternatives">): string | null {
+  const where = m.region ?? m.country;
+  if (!where) return null;
+  return m.region_alternatives.length ? `${where} (near ${m.region_alternatives.join(", ")})` : where;
 }
 
 /** "17.60957, 83.20412": the form Google Maps accepts when pasted. */

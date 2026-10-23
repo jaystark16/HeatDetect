@@ -42,7 +42,7 @@ from memory. The pipeline appends continuously, so counts grow. Permanent rules 
 | Detection window | 2026-07-25 → 2026-10-06 (~73 days) |
 | OSM facilities / land parcels | 39,493 / 74,955 (54 cached tiles, 1.7 MB) |
 | Locations with surveyed industrial context | **16,715 of 19,889** (84%) |
-| Backend tests / frontend tests / eval scenarios | **291** / **95** / **18** |
+| Backend tests / frontend tests / eval scenarios | **325** / **103** / **18** |
 | Live site | HTTP 200, auto-rebuilt every 3 h |
 
 **Label distribution (locations):** `natural_fire` 10,140 · `unknown` 9,528 ·
@@ -78,9 +78,8 @@ See `ROADMAP.md` for the full list. Most pressing:
    with the rules), and "seasonal fire activity" (a cause no fact states). The brief and
    deep answers also used slightly different Gujarat boxes (70 vs 91 vegetation fires);
    follow-ups now reuse the earlier search's exact filters, but the deep pass may not.
-   A rectangle is a crude stand-in for a state: the model's "Odisha" box also caught
-   Vizag (Andhra Pradesh) and Kharagpur-area sources (West Bengal). Real admin-1
-   boundaries (point-in-polygon) would fix this.
+   States and countries are now searched by real boundary (2026-10-23); cities still
+   use the model's approximate box.
 2. Decide whether to host the backend on Render (`render.yaml` is ready) or keep the
    static snapshot for the demo.
 3. Fill the plan PDF's Phase 8 gaps: alert panel and CSV/GeoJSON/report export.

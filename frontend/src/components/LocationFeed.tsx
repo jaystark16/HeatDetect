@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 
 import { CLASS_STYLES } from "../classes";
+import { placeLabel } from "../maps";
 import type { MapMark } from "../types";
 import { formatAge } from "./ProvenanceBar";
 
@@ -66,7 +67,10 @@ export default function LocationFeed({ marks, selectedId, onSelect }: Props) {
                       {coordinate(mark.latitude, "N", "S")},{" "}
                       {coordinate(mark.longitude, "E", "W")}
                     </div>
-                    <p className="feed-card__class">{style.shortLabel}</p>
+                    <p className="feed-card__class">
+                      {style.shortLabel}
+                      {placeLabel(mark) ? ` · ${placeLabel(mark)}` : ""}
+                    </p>
                   </div>
                   <span
                     className={`badge badge--${mark.label}`}

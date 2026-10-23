@@ -38,6 +38,7 @@ from sqlalchemy import (
     String,
     Table,
     create_engine,
+    inspect,
 )
 from sqlalchemy.engine import Engine
 
@@ -154,6 +155,12 @@ cell_context = Table(
     # Distinguishes "we looked and found nothing nearby" from "we have not looked
     # here yet". Conflating those two would turn missing coverage into evidence.
     Column("context_coverage", String(16), nullable=False),
+    # Indian state or union territory; outside India only the country is
+    # recorded. Both NULL when the cell lies outside every boundary (offshore).
+    Column("region", String(80), nullable=True),
+    Column("region_country", String(60), nullable=True),
+    # Other regions within regions.NEAR_BOUNDARY_M: the cell may lie in one.
+    Column("region_alternatives", JSON, nullable=True),
     Column("computed_at", DateTime(timezone=True), nullable=False),
     Column("code_version", String(16), nullable=False),
 )
@@ -250,5 +257,29 @@ def build_engine(url: str | None = None) -> Engine:
     return create_engine(f"sqlite+pysqlite:///{path}", future=True)
 
 
+# Columns added after their table first shipped. create_all does not alter an
+# existing table, so a database built earlier would fail on the first query
+# naming them. Only nullable columns belong here: existing rows stay valid, with
+# NULL meaning "not computed yet" until the features stage runs again.
+_ADDED_COLUMNS: dict[str, tuple[str, ...]] = {
+    "cell_context": ("region", "region_country", "region_alternatives"),
+}
+
+
 def init_schema(engine: Engine) -> None:
     metadata.create_all(engine)
+    inspector = inspect(engine)
+    for table_name, names in _ADDED_COLUMNS.items():
+        existing = {c["name"] for c in inspector.get_columns(table_name)}
+        table = metadata.tables[table_name]
+        with engine.begin() as conn:
+            for name in names:
+                if name in existing:
+                    continue
+                column = table.c[name]
+                if not column.nullable:
+                    raise RuntimeError(f"{table_name}.{name} must be nullable to be added in place")
+                conn.exec_driver_sql(
+                    f"ALTER TABLE {table_name} ADD COLUMN {name} "
+                    f"{column.type.compile(dialect=engine.dialect)}"
+                )
