@@ -46,6 +46,12 @@ describe("the briefing", () => {
     expect(renderFacts(briefing.facts)).toContain(`[${briefing.facts.length}] `);
   });
 
+  it("names classes as the page does, so answers do not echo code names", () => {
+    const text = renderFacts(briefing.facts);
+    expect(text).toContain("Classifier test result for persistent industrial sources:");
+    expect(text).not.toMatch(/\b(industrial_fire|persistent_industrial|natural_fire)\b/);
+  });
+
   it("states the totals the analytics report", () => {
     const a = snapshot.analytics;
     expect(fact(/detections at .* locations\.$/).text).toBe(

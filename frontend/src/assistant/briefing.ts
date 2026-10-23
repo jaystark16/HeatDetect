@@ -114,13 +114,16 @@ export function buildBriefing(question: string, ctx: AskContext): Briefing {
     { precision: number; recall: number; support: number }
   > | null;
   if (perClass) {
+    // The page's names, not the code's: answers echoed "industrial_fire"
+    // (observed 2026-10-23 on the live site).
+    const named = (label: string) => (label in NOUN ? NOUN[label as ThermalClass][1] : label);
     for (const [label, r] of Object.entries(perClass)) {
       add(
         "method",
-        `Classifier test result for ${label}: precision ${r.precision.toFixed(3)}, recall ${r.recall.toFixed(3)}, on ${r.support} examples.`,
+        `Classifier test result for ${named(label)}: precision ${r.precision.toFixed(3)}, recall ${r.recall.toFixed(3)}, on ${r.support} examples.`,
       );
     }
-    const suppressed = Object.entries(perClass).filter(([, r]) => r.precision < 0.5).map(([l]) => l);
+    const suppressed = Object.entries(perClass).filter(([, r]) => r.precision < 0.5).map(([l]) => named(l));
     if (suppressed.length) {
       add(
         "method",
