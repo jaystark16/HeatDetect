@@ -70,7 +70,7 @@ OpenStreetMap via Overpass (cached, committed)
 
 As of 6 October 2026 a local build holds **61,397 detections** across **19,889 locations** (25 July – 6 October), enriched with **39,493 industrial features** and **74,955 land parcels** from 54 cached OSM tiles. **16,715 of those locations (84%) have surveyed industrial context**; the rest report *not classified* rather than being assumed empty. The deployed dashboard rebuilds every 3 hours, so its own counts move with the data — the stats bar shows the current ones.
 
-There is **no LLM in this system**, deliberately — see [ADR 0007](docs/adr/0007-no-llm.md). Evidence sentences are templates filled from computed values, so they cannot fabricate.
+**No language model takes part in classification or evidence**, deliberately ([ADR 0007](docs/adr/0007-no-llm.md)): verdicts come from the rules and the classifier, and evidence sentences are templates filled from computed values, so they cannot fabricate. The **Ask tab** does use language models, but only to word answers from facts the code computes, and every sentence is checked against the facts it cites — see [The Ask tab](#the-ask-tab).
 
 ---
 
@@ -131,14 +131,19 @@ An ablation isolating how much is genuine thermal signal versus geography: [`doc
 
 ## The Ask tab
 
-Ask anything about the data beside the map. Answers are written by **Google Gemini**,
-which reasons over a briefing of ~75 numbered facts the page computes from the same rows
-the map draws: provenance and freshness, how classification works, the classifier's
-measured precision and recall, totals, recent activity, explicit rankings, where activity
-concentrates, and the full evidence for any open location
-([`briefing.ts`](frontend/src/assistant/briefing.ts)). It returns an answer, an analysis,
-caveats and follow-up questions, and **every sentence cites the facts it rests on** —
-click a citation to see them, and jump to the location on the map.
+Ask anything about the data beside the map, in plain words. Answers are written by a
+language model on **Ollama Cloud** — gemma4:31b first, then nemotron-3-super, beam and
+gpt-oss:120b, an order chosen by measurement
+([`docs/findings/2026-10-23-ollama-model-comparison.md`](docs/findings/2026-10-23-ollama-model-comparison.md));
+Google Gemini can serve as a further fallback when its key is configured. The model reasons
+over a briefing of ~75 numbered facts the page computes from the same rows the map draws
+([`briefing.ts`](frontend/src/assistant/briefing.ts)), and looks things up in all of the
+data with tools ([`tools.ts`](frontend/src/assistant/tools.ts)): a state or country by its
+real boundary, a city or point, a class, a time window, one location's evidence. Every
+place a search finds is listed under the answer with its coordinates, a Google Maps link
+and a CSV download. Follow-ups work ("which of those are in Odisha?"), and greetings get a
+plain reply instead of statistics. **Every sentence that states a fact cites the facts it
+rests on** — click a citation to see them, and jump to the location on the map.
 
 Each sentence is checked against *its own* citations
 ([`verify.ts`](frontend/src/assistant/verify.ts)): its numbers, names and source types
@@ -147,8 +152,8 @@ certainty words are refused. A sentence that fails is withheld and the reason sh
 "is there a refinery fire in Gujarat right now?", it withheld its own answer — no fact
 names Gujarat or a refinery — and said so.
 
-The Gemini key lives only in a Cloudflare Worker ([`proxy/`](proxy/README.md)), never in
-the website or the repository. If Gemini is unreachable, an on-device open-weight model
+The model keys live only in a Cloudflare Worker ([`proxy/`](proxy/README.md)), never in
+the website or the repository. If no model service answers, an on-device open-weight model
 (Qwen3-1.7B, run in the browser via WebGPU) or the computed answer takes over, and the
 page says which. Decisions and measurements: [ADR 0009](docs/adr/0009-gemini-through-a-proxy.md),
 [ADR 0008](docs/adr/0008-on-device-assistant.md).

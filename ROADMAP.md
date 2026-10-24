@@ -31,8 +31,8 @@ As far as `frontend/src` shows on 2026-10-08:
       calls Gemini directly (the Cloudflare proxy was dropped on 2026-10-08).
 - [ ] Decide on hosting the backend on Render. If hosting it, connect the Blueprint, set
       `API_BASE_URL`, and check that the API fits in 512 MiB with the 7.45 MiB model.
-- [ ] Fix stale docs: the README "no LLM in this system" line, and the 2.4 MiB model-size
-      comments in `.gitignore` / `render.yaml`.
+- [x] Fix the README "no LLM in this system" line (2026-10-24).
+- [ ] Fix the 2.4 MiB model-size comments in `.gitignore` / `render.yaml` (it is 7.45 MiB).
 - [ ] Consider trimming the model artifact (`n_estimators`, compression).
 - [ ] Add rate limiting before any public API deployment.
 - [ ] Authenticate any write endpoint (e.g. the plan's `POST /api/classify`) before it ships.

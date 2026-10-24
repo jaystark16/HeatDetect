@@ -3,6 +3,17 @@
 Append-only, newest first. Record decisions and their reasons, failures and why,
 and debugging discoveries. Don't repeat what git history or the code already says.
 
+## 2026-10-24
+
+- **Making the repository private took the live site down.** On a free GitHub account a
+  private repository cannot have a Pages site, so GitHub deleted the Pages setup: the site
+  returned 404 and every 3-hourly rebuild failed at `actions/configure-pages` ("Get Pages
+  site failed … Not Found"). Making it public again was not enough; Pages also had to be
+  switched back on (Settings → Pages → Source: GitHub Actions). Keep the repository public,
+  or move hosting (Cloudflare Pages) or the plan (GitHub Pro) first.
+- **The README's "There is no LLM in this system" line was fixed.** It predated the Ask tab;
+  ADR 0007 is now marked superseded in part. Classification and evidence still use no LLM.
+
 ## 2026-10-23
 
 - **The Ask tab could not hold a conversation.** "hello" got statistics; "give me locations

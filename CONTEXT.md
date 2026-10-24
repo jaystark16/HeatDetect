@@ -83,9 +83,8 @@ See `ROADMAP.md` for the full list. Most pressing:
 2. Decide whether to host the backend on Render (`render.yaml` is ready) or keep the
    static snapshot for the demo.
 3. Fill the plan PDF's Phase 8 gaps: alert panel and CSV/GeoJSON/report export.
-4. Fix docs that went stale (2026-10-08):
-   - README still says "There is no LLM in this system", but the Ask tab uses Gemini.
-   - `.gitignore` and `render.yaml` describe the model as 2.4 MiB; it is 7.45 MiB.
+4. Fix docs that went stale (2026-10-08): `.gitignore` and `render.yaml` describe the
+   model as 2.4 MiB; it is 7.45 MiB. (The README "no LLM" line was fixed 2026-10-24.)
 
 ## Open questions
 

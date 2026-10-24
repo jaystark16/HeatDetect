@@ -1,6 +1,10 @@
 # ADR 0007 — No LLM in the pipeline
 
-**Status:** accepted, 2026-09-18
+**Status:** accepted, 2026-09-18. **Superseded in part** on 2026-10-07 by
+[ADR 0008](0008-on-device-assistant.md) and [ADR 0009](0009-gemini-through-a-proxy.md):
+the Ask tab now uses language models, as this ADR's "When to revisit" allowed, with every
+fact computed by code and every sentence checked against its citations. Classification and
+the evidence sentences still contain no language model; that part stands.
 
 ## Context
 
