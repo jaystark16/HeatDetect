@@ -86,6 +86,9 @@ FIRMS_VIIRS = Dataset(
         "and may be revised.",
         "Regional archive files cover a rolling window only — they are not a "
         "long-term historical record.",
+        "Suomi NPP data delivery ends on 2 November 2026 (NASA Worldview notice, "
+        "seen 2026-10-24); NOAA-20 and NOAA-21 continue. From then on about a third "
+        "fewer VIIRS passes are available, so a location may be seen less often.",
     ),
     requires_credentials=False,
     notes=(

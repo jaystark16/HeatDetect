@@ -5,6 +5,14 @@ and debugging discoveries. Don't repeat what git history or the code already say
 
 ## 2026-10-24
 
+- **A blind hand-check replaces circular accuracy.** `app/validation.py` draws a seeded,
+  stratified, shuffled sample; the checkers' sheet holds only place, date and imagery links,
+  the system's answers sit in a separate key. Links were opened before use: Worldview needs
+  a frame of about 0.5° (at 0.1° it opens on the whole globe), and Google's satellite form
+  drops no pin, so the sheet carries a pin link too. Landsat and ECOSTRESS thermal cannot be
+  linked without a login; the instructions explain the manual route for hard cases.
+- **Suomi NPP data delivery ends 2026-11-02** (Worldview notice). Not an outage: ingestion
+  only fails when every product fails. It does mean fewer passes per location.
 - **Making the repository private took the live site down.** On a free GitHub account a
   private repository cannot have a Pages site, so GitHub deleted the Pages setup: the site
   returned 404 and every 3-hourly rebuild failed at `actions/configure-pages` ("Get Pages

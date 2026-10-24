@@ -42,7 +42,7 @@ from memory. The pipeline appends continuously, so counts grow. Permanent rules 
 | Detection window | 2026-07-25 → 2026-10-06 (~73 days) |
 | OSM facilities / land parcels | 39,493 / 74,955 (54 cached tiles, 1.7 MB) |
 | Locations with surveyed industrial context | **16,715 of 19,889** (84%) |
-| Backend tests / frontend tests / eval scenarios | **325** / **118** / **18** |
+| Backend tests / frontend tests / eval scenarios | **341** / **118** / **18** |
 | Live site | HTTP 200, auto-rebuilt every 3 h |
 
 **Label distribution (locations):** `natural_fire` 10,140 · `unknown` 9,528 ·
@@ -72,6 +72,12 @@ Configured: secrets `FIRMS_MAP_KEY`, `OLLAMA_API_KEY`, `CLOUDFLARE_API_TOKEN`, `
 
 See `ROADMAP.md` for the full list. Most pressing:
 
+0. **Blind hand-check (2026-10-24):** the team labels `docs/validation/2026-10-24-sample.csv`
+   (271 locations) from imagery, then `python -m app.validation score` gives real precision
+   per class. Then: population within 5 km (WorldPop 2020, approved) with an alerts list, and
+   weather before each detection (Open-Meteo ERA5, approved), judged against the hand-check.
+   Suomi NPP stops on 2026-11-02: ingestion carries on with NOAA-20/21 (a failed product does
+   not fail the run); remove it from `firms.PRODUCTS` after that date.
 1. Tighten the Ask tab's analysis sentences. Live test 2026-10-23: every number matched a
    recount, but two deep-mode sentences passed the gate while overreaching: the rules'
    classification "aligns with the classifier's precision" (those metrics measure agreement
