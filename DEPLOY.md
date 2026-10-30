@@ -31,6 +31,13 @@ not committed) and publishes. Nothing is committed per run. A scheduled run whos
 refresh fails deploys nothing, so the previous deployment stays live. Before publishing,
 the deploy checks the snapshot invariants against the exact files it is about to ship.
 
+FIRMS sometimes stops answering for minutes at a time. The pipeline retries a request
+that got no answer after 1, 3 and 7 minutes, never a request FIRMS answered with an
+error. If nothing has come back by then, `ingest` exits 75. A scheduled run then checks
+the live site's `snapshot.json`: under 12 hours old (`STALE_AFTER_HOURS`), it skips the
+refresh with a warning and the live build stays up; older, or unreadable, it fails. The
+log's "connection check" lines show what each of FIRMS's addresses did.
+
 ### Render
 
 The free plan has 512 MiB of RAM, so it runs with `--workers 1`. The build provisions its

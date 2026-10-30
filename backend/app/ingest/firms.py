@@ -20,6 +20,7 @@ from __future__ import annotations
 import csv
 import io
 import logging
+import socket
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -35,6 +36,17 @@ USER_AGENT: Final = (
 
 BASE: Final = "https://firms.modaps.eosdis.nasa.gov/data/active_fire"
 API_BASE: Final = "https://firms.modaps.eosdis.nasa.gov/api"
+HOST: Final = httpx.URL(BASE).host
+
+# A connection that does not open within 30 s is not going to. In the outages of
+# 2026-10-25 and 2026-10-29 every attempt hung about 127 s, the kernel's own
+# limit, before failing. Reading a large file still gets the full 180 s.
+TIMEOUT: Final = httpx.Timeout(180.0, connect=30.0)
+
+# Seconds to wait before each retry of requests that could not connect: about
+# 11 minutes in all. Both outages took every request down at once and were over
+# by the next scheduled run.
+RETRY_WAITS_S: Final[tuple[float, ...]] = (60.0, 180.0, 420.0)
 
 Instrument = Literal["VIIRS", "MODIS"]
 Window = Literal["24h", "7d"]
@@ -205,7 +217,56 @@ class FirmsUnavailable(RuntimeError):
 
     Raised rather than returning empty, so a caller cannot mistake a failed
     fetch for a genuine absence of thermal activity.
+
+    `retryable` is true when no answer came back, or FIRMS said it could not
+    serve one just now (5xx, 429). Waiting can fix those. It cannot fix a 404 or
+    a page that is not a FIRMS CSV, so those are not retried.
     """
+
+    def __init__(self, message: str, *, retryable: bool = False) -> None:
+        super().__init__(message)
+        self.retryable = retryable
+
+
+def _retryable(exc: httpx.HTTPError) -> bool:
+    if isinstance(exc, httpx.HTTPStatusError):
+        status = exc.response.status_code
+        return status >= 500 or status == 429
+    # Refused, unreachable, timed out or cut off: no answer at all.
+    return isinstance(exc, httpx.TransportError)
+
+
+def diagnose_connectivity(
+    host: str = HOST, port: int = 443, timeout: float = 10.0
+) -> list[str]:
+    """Try a plain TCP connection to each address `host` resolves to.
+
+    A failed request reports only the last address tried. GitHub's runners have
+    no IPv6, so that was the IPv6 one ("Network is unreachable") in both failed
+    runs, while the IPv4 attempt before it had hung. One line per address shows
+    what each really did.
+    """
+    try:
+        found = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except socket.gaierror as exc:
+        return [f"{host}: name lookup failed ({exc})"]
+
+    lines: list[str] = []
+    tried: set[str] = set()
+    for family, kind, proto, _, address in found:
+        ip = str(address[0])
+        if ip in tried:
+            continue
+        tried.add(ip)
+        try:
+            with socket.socket(family, kind, proto) as sock:
+                sock.settimeout(timeout)
+                sock.connect(address)
+        except OSError as exc:
+            lines.append(f"{ip}: {exc or type(exc).__name__}")
+        else:
+            lines.append(f"{ip}: connected")
+    return lines
 
 
 def fetch(
@@ -219,13 +280,15 @@ def fetch(
     url = product.url(window)
     owned = client is None
     client = client or httpx.Client(
-        headers={"User-Agent": USER_AGENT}, timeout=httpx.Timeout(120.0), follow_redirects=True
+        headers={"User-Agent": USER_AGENT}, timeout=TIMEOUT, follow_redirects=True
     )
     try:
         response = client.get(url)
         response.raise_for_status()
     except httpx.HTTPError as exc:
-        raise FirmsUnavailable(f"Fetching {url} failed: {exc}") from exc
+        raise FirmsUnavailable(
+            f"Fetching {url} failed: {exc}", retryable=_retryable(exc)
+        ) from exc
     finally:
         if owned:
             client.close()
@@ -293,14 +356,16 @@ def fetch_area(
     owned = client is None
     client = client or httpx.Client(
         headers={"User-Agent": USER_AGENT},
-        timeout=httpx.Timeout(180.0),
+        timeout=TIMEOUT,
         follow_redirects=True,
     )
     try:
         response = client.get(url)
         response.raise_for_status()
     except httpx.HTTPError as exc:
-        raise FirmsUnavailable(f"Fetching keyed area failed: {exc}") from exc
+        raise FirmsUnavailable(
+            f"Fetching keyed area failed: {exc}", retryable=_retryable(exc)
+        ) from exc
     finally:
         if owned:
             client.close()
