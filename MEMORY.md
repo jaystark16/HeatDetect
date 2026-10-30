@@ -3,6 +3,19 @@
 Append-only, newest first. Record decisions and their reasons, failures and why,
 and debugging discoveries. Don't repeat what git history or the code already says.
 
+## 2026-10-30
+
+- **FIRMS outages failed the scheduled refresh; now they are waited out.** On 2026-10-25
+  (~21:00 UTC) and 2026-10-29 (~18:35 UTC) every FIRMS request failed for the whole run,
+  and the next run worked. The logged "[Errno 101] Network is unreachable" was misleading:
+  GitHub's runners have no IPv6, a failed connection reports only the last address tried,
+  and each failure took ~135 s, the kernel's ~127 s limit for an unanswered IPv4
+  connection. So FIRMS's IPv4 address stopped answering; the IPv6 error came after it.
+  In 12 good runs no product ever failed on its own: outages take every request at once.
+  The pipeline now retries what got no answer (1, 3, 7 minutes), stops a round at the
+  first dead connection, skips the refresh while the live build is under 12 h old, and
+  logs a per-address connection check.
+
 ## 2026-10-24
 
 - **A blind hand-check replaces circular accuracy.** `app/validation.py` draws a seeded,

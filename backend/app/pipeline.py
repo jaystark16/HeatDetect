@@ -17,6 +17,7 @@ import argparse
 import logging
 import sys
 import time
+from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
@@ -49,6 +50,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger("pipeline")
 
+EXIT_SOURCE_UNAVAILABLE = 75
+"""sysexits' EX_TEMPFAIL: FIRMS could not be reached even after retrying. Kept
+apart from 1 (a bug, or FIRMS answering with errors) because the Pages workflow
+treats it differently: it keeps the live build while that is recent."""
+
 
 def _start_run(engine: Engine, source: str, detail: str | None, url: str | None) -> int:
     with engine.begin() as conn:
@@ -80,56 +86,121 @@ def _finish_run(engine: Engine, run_id: int, **values: object) -> None:
 # ------------------------------------------------------------------ FIRMS --
 
 
-def cmd_ingest(engine: Engine, window: str) -> int:
-    """Fetch every FIRMS product and store detections inside the analysis bbox."""
-    bbox = settings.bbox
-    total_inserted = 0
-    failures = 0
-
-    client = httpx.Client(
+def _firms_client() -> httpx.Client:
+    return httpx.Client(
         headers={"User-Agent": firms.USER_AGENT},
-        timeout=httpx.Timeout(180.0),
+        timeout=firms.TIMEOUT,
         follow_redirects=True,
     )
-    try:
-        for product in firms.PRODUCTS:
-            url = product.url(window)  # type: ignore[arg-type]
-            run_id = _start_run(engine, "firms", f"{product.id}/{window}", url)
+
+
+def _with_retries[T](
+    items: Sequence[T],
+    attempt: Callable[[T], None],
+    *,
+    what: str,
+    waits: Sequence[float],
+    sleep: Callable[[float], None],
+) -> tuple[int, list[T]]:
+    """Run `attempt` on every item, retrying those that could not connect.
+
+    A round stops at the first item that could not connect: FIRMS outages have
+    taken every request down at once, and each dead connection costs the full
+    connect timeout. That item and the rest wait for the next round. Items that
+    FIRMS answered with an error are not retried, since waiting will not change
+    the answer.
+
+    Returns how many items failed with an answer, and the items still
+    unreachable after the last round.
+    """
+    pending = list(items)
+    answered_with_error = 0
+    for wait in (None, *waits):
+        if wait is not None:
+            logger.warning(
+                "%s: FIRMS unreachable, %d requests left; retrying in %.0f s",
+                what,
+                len(pending),
+                wait,
+            )
+            sleep(wait)
+        unreachable: list[T] = []
+        for index, item in enumerate(pending):
             try:
-                result = firms.fetch(product, window, client=client)  # type: ignore[arg-type]
-                parsed, report = firms.parse(result)
+                attempt(item)
             except firms.FirmsUnavailable as exc:
-                failures += 1
-                logger.error("ingest %s FAILED: %s", product.id, exc)
-                _finish_run(engine, run_id, status="failed", error=str(exc)[:1000])
-                continue
+                if exc.retryable:
+                    unreachable = pending[index:]
+                    break
+                answered_with_error += 1
+        pending = unreachable
+        if not pending:
+            break
+    return answered_with_error, pending
 
-            in_area = [
-                d for d in parsed if bbox_contains(bbox, d.latitude, d.longitude)
-            ]
-            inserted = _store_detections(engine, in_area, run_id)
-            total_inserted += inserted
 
-            logger.info(
-                "ingest %-7s %s | in-bbox %d | newly stored %d",
-                product.id,
-                report.summary(),
-                len(in_area),
-                inserted,
-            )
-            _finish_run(
-                engine,
-                run_id,
-                status="success",
-                rows_seen=report.rows_seen,
-                rows_accepted=report.accepted,
-                rows_rejected=report.rejected,
-                rows_inserted=inserted,
-                reject_reasons=dict(report.reject_reasons) or None,
-            )
+def cmd_ingest(
+    engine: Engine,
+    window: str,
+    *,
+    client: httpx.Client | None = None,
+    waits: Sequence[float] = firms.RETRY_WAITS_S,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
+    """Fetch every FIRMS product and store detections inside the analysis bbox.
+
+    Returns 0 when at least one product came back, EXIT_SOURCE_UNAVAILABLE when
+    none did and FIRMS was still unreachable after the last retry, and 1 when
+    every product was answered with an error.
+    """
+    bbox = settings.bbox
+    total_inserted = 0
+    owned = client is None
+    client = client or _firms_client()
+
+    def ingest_one(product: firms.Product) -> None:
+        nonlocal total_inserted
+        url = product.url(window)  # type: ignore[arg-type]
+        run_id = _start_run(engine, "firms", f"{product.id}/{window}", url)
+        try:
+            result = firms.fetch(product, window, client=client)  # type: ignore[arg-type]
+            parsed, report = firms.parse(result)
+        except firms.FirmsUnavailable as exc:
+            logger.error("ingest %s FAILED: %s", product.id, exc)
+            _finish_run(engine, run_id, status="failed", error=str(exc)[:1000])
+            raise
+
+        in_area = [d for d in parsed if bbox_contains(bbox, d.latitude, d.longitude)]
+        inserted = _store_detections(engine, in_area, run_id)
+        total_inserted += inserted
+
+        logger.info(
+            "ingest %-7s %s | in-bbox %d | newly stored %d",
+            product.id,
+            report.summary(),
+            len(in_area),
+            inserted,
+        )
+        _finish_run(
+            engine,
+            run_id,
+            status="success",
+            rows_seen=report.rows_seen,
+            rows_accepted=report.accepted,
+            rows_rejected=report.rejected,
+            rows_inserted=inserted,
+            reject_reasons=dict(report.reject_reasons) or None,
+        )
+
+    try:
+        answered_with_error, unreachable = _with_retries(
+            firms.PRODUCTS, ingest_one, what="ingest", waits=waits, sleep=sleep
+        )
     finally:
-        client.close()
+        if owned:
+            client.close()
 
+    failures = answered_with_error + len(unreachable)
     with engine.connect() as conn:
         stored = conn.execute(select(func.count()).select_from(detections)).scalar_one()
     logger.info(
@@ -138,7 +209,9 @@ def cmd_ingest(engine: Engine, window: str) -> int:
         stored,
         failures,
     )
-    return 1 if failures == len(firms.PRODUCTS) else 0
+    if failures < len(firms.PRODUCTS):
+        return 0
+    return EXIT_SOURCE_UNAVAILABLE if unreachable else 1
 
 
 def _store_detections(
@@ -203,7 +276,15 @@ def _store_detections(
     return len(fresh)
 
 
-def cmd_backfill(engine: Engine, days_back: int, max_requests: int | None) -> int:
+def cmd_backfill(
+    engine: Engine,
+    days_back: int,
+    max_requests: int | None,
+    *,
+    client: httpx.Client | None = None,
+    waits: Sequence[float] = firms.RETRY_WAITS_S,
+    sleep: Callable[[float], None] = time.sleep,
+) -> int:
     """Extend detection history backwards using the keyed FIRMS endpoint.
 
     This is the only feature that needs a MAP_KEY, and it earns one. The open
@@ -243,71 +324,70 @@ def cmd_backfill(engine: Engine, days_back: int, max_requests: int | None) -> in
         planned,
     )
 
-    client = httpx.Client(
-        headers={"User-Agent": firms.USER_AGENT},
-        timeout=httpx.Timeout(180.0),
-        follow_redirects=True,
-    )
+    planned_requests = [(start, product) for start in starts for product in firms.PRODUCTS]
+    if max_requests is not None and len(planned_requests) > max_requests:
+        logger.info("backfill: request cap reached, making the first %d only", max_requests)
+        planned_requests = planned_requests[:max_requests]
+
+    owned = client is None
+    client = client or _firms_client()
     total_inserted = 0
     total_seen = 0
-    failures = 0
     requests_made = 0
 
+    def backfill_one(request: tuple[str, firms.Product]) -> None:
+        nonlocal total_inserted, total_seen, requests_made
+        start, product = request
+        run_id = _start_run(
+            engine, "firms_backfill", f"{product.id}/{start}+{chunk}d", None
+        )
+        requests_made += 1
+        try:
+            result = firms.fetch_area(
+                product,
+                map_key=settings.firms_map_key,
+                days=chunk,
+                start_date=start,
+                bbox=bbox,
+                client=client,
+            )
+            parsed, report = firms.parse(result)
+        except firms.FirmsUnavailable as exc:
+            logger.warning("backfill %s %s failed: %s", product.id, start, exc)
+            _finish_run(engine, run_id, status="failed", error=str(exc)[:1000])
+            raise
+
+        in_area = [d for d in parsed if bbox_contains(bbox, d.latitude, d.longitude)]
+        inserted = _store_detections(engine, in_area, run_id)
+        total_inserted += inserted
+        total_seen += report.accepted
+
+        logger.info(
+            "backfill %-7s %s  %s | new %d",
+            product.id,
+            start,
+            report.summary(),
+            inserted,
+        )
+        _finish_run(
+            engine,
+            run_id,
+            status="success",
+            rows_seen=report.rows_seen,
+            rows_accepted=report.accepted,
+            rows_rejected=report.rejected,
+            rows_inserted=inserted,
+            reject_reasons=dict(report.reject_reasons) or None,
+        )
+
     try:
-        for start in starts:
-            for product in firms.PRODUCTS:
-                if max_requests is not None and requests_made >= max_requests:
-                    logger.info("backfill: request cap reached, stopping early")
-                    raise StopIteration
-
-                run_id = _start_run(
-                    engine, "firms_backfill", f"{product.id}/{start}+{chunk}d", None
-                )
-                requests_made += 1
-                try:
-                    result = firms.fetch_area(
-                        product,
-                        map_key=settings.firms_map_key,
-                        days=chunk,
-                        start_date=start,
-                        bbox=bbox,
-                        client=client,
-                    )
-                    parsed, report = firms.parse(result)
-                except firms.FirmsUnavailable as exc:
-                    failures += 1
-                    logger.warning("backfill %s %s failed: %s", product.id, start, exc)
-                    _finish_run(engine, run_id, status="failed", error=str(exc)[:1000])
-                    continue
-
-                in_area = [
-                    d for d in parsed if bbox_contains(bbox, d.latitude, d.longitude)
-                ]
-                inserted = _store_detections(engine, in_area, run_id)
-                total_inserted += inserted
-                total_seen += report.accepted
-
-                logger.info(
-                    "backfill %-7s %s  %s | new %d",
-                    product.id,
-                    start,
-                    report.summary(),
-                    inserted,
-                )
-                _finish_run(
-                    engine,
-                    run_id,
-                    status="success",
-                    rows_seen=report.rows_seen,
-                    rows_accepted=report.accepted,
-                    rows_rejected=report.rejected,
-                    rows_inserted=inserted,
-                    reject_reasons=dict(report.reject_reasons) or None,
-                )
-    except StopIteration:
-        pass
+        answered_with_error, unreachable = _with_retries(
+            planned_requests, backfill_one, what="backfill", waits=waits, sleep=sleep
+        )
     finally:
-        client.close()
+        if owned:
+            client.close()
+    failures = answered_with_error + len(unreachable)
 
     with engine.connect() as conn:
         stored, oldest, newest = conn.execute(
@@ -331,6 +411,55 @@ def cmd_backfill(engine: Engine, days_back: int, max_requests: int | None) -> in
     )
     logger.info("Run `features` next so the longer history reaches the baselines.")
     return 1 if failures and not total_inserted else 0
+
+
+def cmd_site_age(
+    url: str,
+    max_hours: float,
+    *,
+    client: httpx.Client | None = None,
+    now: datetime | None = None,
+) -> int:
+    """Exit 0 if the published snapshot at `url` was built within `max_hours`.
+
+    The Pages workflow asks this when FIRMS stays unreachable: a recent live
+    build can wait for the next scheduled run, a stale one needs a person. An
+    answer that cannot be read counts as stale, so not knowing the age never
+    passes for knowing it is fine.
+    """
+    owned = client is None
+    client = client or httpx.Client(
+        headers={"User-Agent": firms.USER_AGENT},
+        timeout=httpx.Timeout(30.0),
+        follow_redirects=True,
+    )
+    try:
+        response = client.get(url)
+        response.raise_for_status()
+        built = datetime.fromisoformat(response.json()["generated_at"])
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        logger.error("site-age: could not read when %s was built: %s", url, exc)
+        return 1
+    finally:
+        if owned:
+            client.close()
+
+    if built.tzinfo is None:
+        built = built.replace(tzinfo=timezone.utc)
+    age_hours = ((now or datetime.now(timezone.utc)) - built).total_seconds() / 3600
+    if age_hours <= max_hours:
+        logger.info(
+            "site-age: the live build is %.1f h old, within the %.0f h limit",
+            age_hours,
+            max_hours,
+        )
+        return 0
+    logger.error(
+        "site-age: the live build is %.1f h old, over the %.0f h limit",
+        age_hours,
+        max_hours,
+    )
+    return 1
 
 
 # -------------------------------------------------------------- OSM tiles --
@@ -734,12 +863,25 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("all", help="ingest -> facilities -> features")
     sub.add_parser("status", help="Show what is actually in the database")
 
+    p_age = sub.add_parser(
+        "site-age", help="Exit 0 if the published snapshot was built recently"
+    )
+    p_age.add_argument("--url", required=True, help="The live snapshot.json")
+    p_age.add_argument("--max-hours", type=float, default=12.0)
+
     args = parser.parse_args(argv)
+    if args.command == "site-age":
+        return cmd_site_age(args.url, args.max_hours)
+
     engine = build_engine()
     init_schema(engine)
 
     if args.command == "ingest":
-        return cmd_ingest(engine, args.window)
+        code = cmd_ingest(engine, args.window)
+        if code == EXIT_SOURCE_UNAVAILABLE:
+            for line in firms.diagnose_connectivity():
+                logger.warning("ingest: connection check %s", line)
+        return code
     if args.command == "backfill":
         return cmd_backfill(engine, args.days_back, args.max_requests)
     if args.command == "facilities":
